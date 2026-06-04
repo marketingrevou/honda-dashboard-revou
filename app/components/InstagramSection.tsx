@@ -43,7 +43,7 @@ function formatNum(n: number): string {
 
 function formatDate(iso: string | null): string {
   if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
+  return new Date(iso).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
 function PostsModal({ modal, onClose }: { modal: ModalState; onClose: () => void }) {
@@ -232,6 +232,9 @@ export default function InstagramSection({ accounts }: Props) {
   const [selectedDealers, setSelectedDealers] = useState<string[]>([])
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const [selectedAccounts, setSelectedAccounts] = useState<string[]>([])
+  const [accountDropdownOpen, setAccountDropdownOpen] = useState(false)
+  const accountDropdownRef = useRef<HTMLDivElement>(null)
 
   const openModal = useCallback((username: string, fullName: string, pillar: PillarLabel | null) => {
     setModal({ username, fullName, pillar })
@@ -239,11 +242,14 @@ export default function InstagramSection({ accounts }: Props) {
 
   const closeModal = useCallback(() => setModal(null), [])
 
-  // Close dropdown when clicking outside
+  // Close dropdowns when clicking outside
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setDropdownOpen(false)
+      }
+      if (accountDropdownRef.current && !accountDropdownRef.current.contains(e.target as Node)) {
+        setAccountDropdownOpen(false)
       }
     }
     document.addEventListener('mousedown', handleClick)
@@ -254,32 +260,59 @@ export default function InstagramSection({ accounts }: Props) {
     new Set(accounts.map(a => a.main_dealer).filter(Boolean) as string[])
   ).sort()
 
-  const filtered = selectedDealers.length > 0
+  const mainDealerFiltered = selectedDealers.length > 0
     ? accounts.filter(a => a.main_dealer && selectedDealers.includes(a.main_dealer))
     : accounts
 
-  const totalPosts = filtered.reduce((s, a) => s + a.post_count, 0)
-  const totalLikes = filtered.reduce((s, a) => s + a.total_likes, 0)
-  const totalViews = filtered.reduce((s, a) => s + a.total_views, 0)
+  const filtered = selectedAccounts.length > 0
+    ? mainDealerFiltered.filter(a => selectedAccounts.includes(a.username))
+    : mainDealerFiltered
+
+  const totalPosts    = filtered.reduce((s, a) => s + a.post_count,     0)
+  const totalLikes    = filtered.reduce((s, a) => s + a.total_likes,    0)
+  const totalViews    = filtered.reduce((s, a) => s + a.total_views,    0)
+  const totalComments = filtered.reduce((s, a) => s + a.total_comments, 0)
+
+  const pillarTotals = PILLAR_COLS.map(({ key, label }) => ({
+    key,
+    label,
+    count: filtered.reduce((s, a) => s + (a.pillar_breakdown[key] ?? 0), 0),
+  }))
+
+  const negativePosts = pillarTotals.find(p => p.key === 'Negative')?.count ?? 0
+  const onBrandRate   = totalPosts > 0 ? Math.round(((totalPosts - negativePosts) / totalPosts) * 100) : 0
 
   function toggleDealer(dealer: string) {
     setSelectedDealers(prev =>
       prev.includes(dealer) ? prev.filter(d => d !== dealer) : [...prev, dealer]
     )
+    setSelectedAccounts([])
   }
 
   function clearDealers() {
     setSelectedDealers([])
     setDropdownOpen(false)
+    setSelectedAccounts([])
+  }
+
+  function toggleAccount(username: string) {
+    setSelectedAccounts(prev =>
+      prev.includes(username) ? prev.filter(u => u !== username) : [...prev, username]
+    )
+  }
+
+  function clearAccounts() {
+    setSelectedAccounts([])
+    setAccountDropdownOpen(false)
   }
 
   if (!accounts.length) {
     return (
       <section className="mt-14">
         <div className="mb-5">
-          <h2 className="section-heading">Instagram Account Performance</h2>
+          <h2 className="section-heading">Performance Overview</h2>
           <p className="font-mulish mt-1" style={{ fontSize: '11.5px', color: '#555555' }}>
-            18 – 31 Mei 2026 &nbsp;&middot;&nbsp; 10 akun dealer Honda
+            18 – 31 May 2026 &nbsp;&middot;&nbsp; 10 Honda dealer accounts
           </p>
           <hr className="section-rule mt-3" />
         </div>
@@ -304,20 +337,78 @@ export default function InstagramSection({ accounts }: Props) {
 
       <section className="mt-14">
         <div className="mb-5">
-          <h2 className="section-heading">Instagram Account Performance</h2>
+          <h2 className="section-heading">Performance Overview</h2>
           <p className="font-mulish mt-1" style={{ fontSize: '11.5px', color: '#555555' }}>
-            18 – 31 Mei 2026 &nbsp;&middot;&nbsp; {filtered.length} akun dealer
-            &nbsp;&middot;&nbsp; {totalPosts} post
-            &nbsp;&middot;&nbsp; {totalLikes.toLocaleString('id-ID')} likes
-            {totalViews > 0 && <> &nbsp;&middot;&nbsp; {totalViews.toLocaleString('id-ID')} views</>}
+            18 – 31 May 2026 &nbsp;&middot;&nbsp; {filtered.length} Honda dealer accounts
           </p>
           <hr className="section-rule mt-3" />
         </div>
 
-        {/* Main Dealer dropdown checklist */}
+        {/* Scorecards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '10px', marginBottom: '10px' }}>
+          {[
+            { label: 'Accounts',  value: String(filtered.length),      accent: '#E62533' },
+            { label: 'Posts',     value: String(totalPosts),            accent: '#E62533' },
+            { label: 'Likes',     value: formatNum(totalLikes),         accent: '#E62533' },
+            { label: 'Views',     value: formatNum(totalViews),         accent: '#E62533' },
+            { label: 'Comments',  value: formatNum(totalComments),      accent: '#E62533' },
+            { label: 'On-brand',  value: `${onBrandRate}%`,            accent: '#16A34A' },
+          ].map(({ label, value, accent }) => (
+            <div
+              key={label}
+              className="bg-white"
+              style={{ border: '1px solid #E5E7EB', borderTop: `3px solid ${accent}`, padding: '16px 18px 14px' }}
+            >
+              <div className="font-roboto font-bold" style={{ fontSize: '30px', color: label === 'On-brand' ? accent : '#111827', lineHeight: 1, letterSpacing: '-0.5px' }}>
+                {value}
+              </div>
+              <div className="font-mulish" style={{ fontSize: '9.5px', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.7px', marginTop: '7px' }}>
+                {label}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Pillar proportion bar */}
+        <div style={{ marginBottom: '20px' }}>
+          <div style={{ display: 'flex', height: 40, overflow: 'hidden', border: '1px solid #E5E7EB' }}>
+            {pillarTotals
+              .filter(p => p.count > 0)
+              .map(({ key, label, count }) => {
+                const pct = totalPosts > 0 ? (count / totalPosts) * 100 : 0
+                return (
+                  <div
+                    key={key}
+                    title={`${label}: ${count} posts (${Math.round(pct)}%)`}
+                    style={{ width: `${pct}%`, background: PILLAR_COLOR[key], display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}
+                  >
+                    {pct > 9 && (
+                      <span className="font-roboto font-bold" style={{ fontSize: '11px', color: '#fff', whiteSpace: 'nowrap' }}>
+                        {Math.round(pct)}%
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+          </div>
+          <div style={{ display: 'flex', gap: '16px', marginTop: '8px', flexWrap: 'wrap' }}>
+            {pillarTotals.filter(p => p.count > 0 || p.key === 'Negative').map(({ key, label, count }) => {
+              const pct = totalPosts > 0 ? Math.round((count / totalPosts) * 100) : 0
+              return (
+                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: PILLAR_COLOR[key], flexShrink: 0 }} />
+                  <span className="font-mulish" style={{ fontSize: '10px', color: '#555555' }}>{label}</span>
+                  <span className="font-roboto font-bold" style={{ fontSize: '10px', color: PILLAR_COLOR[key] }}>{count} ({pct}%)</span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Filter bar */}
         <div className="flex items-center gap-3 mb-4 flex-wrap">
           <span className="font-mulish font-semibold" style={{ fontSize: '10px', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
-            Filter by Main Dealer
+            Filter
           </span>
           <div ref={dropdownRef} style={{ position: 'relative' }}>
             <button
@@ -411,7 +502,101 @@ export default function InstagramSection({ accounts }: Props) {
             )}
           </div>
 
-          {selectedDealers.length > 0 && (
+          {/* Dealer Name dropdown */}
+          <div ref={accountDropdownRef} style={{ position: 'relative' }}>
+            <button
+              onClick={() => setAccountDropdownOpen(o => !o)}
+              className="font-mulish font-semibold flex items-center gap-2"
+              style={{
+                fontSize: '10px',
+                padding: '5px 10px',
+                border: '1px solid',
+                borderColor: selectedAccounts.length > 0 ? '#E62533' : '#D1D5DB',
+                background: '#fff',
+                color: selectedAccounts.length > 0 ? '#E62533' : '#6B7280',
+                cursor: 'pointer',
+                letterSpacing: '0.3px',
+                minWidth: 160,
+                justifyContent: 'space-between',
+              }}
+            >
+              <span>
+                {selectedAccounts.length === 0
+                  ? 'All Accounts'
+                  : selectedAccounts.length === 1
+                  ? (mainDealerFiltered.find(a => a.username === selectedAccounts[0])?.full_name ?? selectedAccounts[0])
+                  : `${selectedAccounts.length} accounts selected`}
+              </span>
+              <span style={{ fontSize: '8px', marginLeft: 4 }}>{accountDropdownOpen ? '▲' : '▼'}</span>
+            </button>
+
+            {accountDropdownOpen && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 4px)',
+                  left: 0,
+                  zIndex: 60,
+                  background: '#fff',
+                  border: '1px solid #E5E7EB',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+                  minWidth: 240,
+                  maxHeight: 260,
+                  overflowY: 'auto',
+                }}
+              >
+                {/* Clear all */}
+                <div style={{ borderBottom: '1px solid #F0F0F0' }}>
+                  <button
+                    onClick={clearAccounts}
+                    className="font-mulish font-semibold w-full text-left"
+                    style={{
+                      fontSize: '10px',
+                      padding: '8px 12px',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: selectedAccounts.length > 0 ? '#E62533' : '#9CA3AF',
+                      letterSpacing: '0.3px',
+                    }}
+                  >
+                    {selectedAccounts.length > 0 ? '✕ Clear filter' : 'All Accounts'}
+                  </button>
+                </div>
+
+                {/* Account options — scoped to current main dealer filter */}
+                {mainDealerFiltered.map(account => {
+                  const checked = selectedAccounts.includes(account.username)
+                  return (
+                    <label
+                      key={account.username}
+                      className="flex items-center gap-2.5 cursor-pointer"
+                      style={{
+                        padding: '8px 12px',
+                        borderBottom: '1px solid #F9F9F9',
+                        background: checked ? '#FFF5F5' : '#fff',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleAccount(account.username)}
+                        style={{ accentColor: '#E62533', width: 12, height: 12, flexShrink: 0 }}
+                      />
+                      <span className="font-mulish" style={{ fontSize: '10.5px', color: '#374151', flex: 1 }}>
+                        {account.full_name || account.username}
+                      </span>
+                      <span className="font-roboto font-bold" style={{ fontSize: '10px', color: '#9CA3AF' }}>
+                        {account.post_count}
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {(selectedDealers.length > 0 || selectedAccounts.length > 0) && (
             <span className="font-mulish" style={{ fontSize: '10px', color: '#9CA3AF' }}>
               Showing {filtered.length} of {accounts.length} accounts
             </span>

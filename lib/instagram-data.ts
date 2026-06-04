@@ -22,14 +22,12 @@ function formatPostDate(iso: string | null): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-export async function getTopPosts(limit = 10): Promise<Post[]> {
+export async function getTopPosts(): Promise<Post[]> {
   const { data: posts } = await supabase
     .from('instagram_posts')
-    .select('post_id, account_username, thumbnail_url, caption, likes_count, comments_count, post_date, post_type, pillar, post_url')
+    .select('post_id, account_username, thumbnail_url, caption, likes_count, comments_count, views_count, post_date, post_type, pillar, post_url')
     .gte('post_date', '2026-05-18')
     .lte('post_date', '2026-05-31')
-    .order('likes_count', { ascending: false })
-    .limit(limit)
 
   if (!posts?.length) return []
 
@@ -49,10 +47,12 @@ export async function getTopPosts(limit = 10): Promise<Post[]> {
     postImageSrc: p.thumbnail_url ?? '',
     likesCount: p.likes_count ?? 0,
     commentsCount: p.comments_count ?? 0,
+    viewsCount: p.views_count ?? 0,
     caption: p.caption ?? '',
     category: pillarToCategory(p.pillar),
     format: typeToFormat(p.post_type),
     instagramUrl: p.post_url ?? '',
+    pillar: (p.pillar as PillarLabel) ?? 'Negative',
   }))
 }
 

@@ -9,10 +9,12 @@ export interface Post {
   postImageSrc: string
   likesCount: number
   commentsCount: number
+  viewsCount: number
   caption: string
   category: PostCategory
   format: PostFormat
   instagramUrl: string
+  pillar: PillarLabel
 }
 
 export interface Idea {

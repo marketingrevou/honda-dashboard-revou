@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic'
 export default async function DashboardPage() {
   const [instagramAccounts, topPosts, trendPosts] = await Promise.all([
     getInstagramAccounts(),
-    getTopPosts(10),
+    getTopPosts(),
     getTrendData(),
   ])
 
@@ -19,7 +19,7 @@ export default async function DashboardPage() {
   return (
     <>
       <Header
-        dateRange="18 – 31 Mei 2026"
+        dateRange="18 – 31 May 2026"
         accountCount={10}
         accounts={[
           '@hondaaristadepok.official',
@@ -36,9 +36,9 @@ export default async function DashboardPage() {
         postCount={totalPosts}
       />
       <main className="max-w-screen-xl mx-auto px-6 pb-16">
-        <PostsSection posts={topPosts} />
         <InstagramSection accounts={instagramAccounts} />
         <TrendSection posts={trendPosts} />
+        <PostsSection posts={topPosts} />
       </main>
       <Footer />
     </>

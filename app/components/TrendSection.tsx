@@ -64,13 +64,16 @@ export default function TrendSection({ posts }: Props) {
   const [selectedDealers, setSelectedDealers] = useState<string[]>([])
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const [selectedAccounts, setSelectedAccounts] = useState<string[]>([])
+  const [accountDropdownOpen, setAccountDropdownOpen] = useState(false)
+  const accountDropdownRef = useRef<HTMLDivElement>(null)
 
   const mainDealers = useMemo(
     () => Array.from(new Set(posts.map((p) => p.main_dealer).filter(Boolean) as string[])).sort(),
     [posts],
   )
 
-  const filteredPosts = useMemo(
+  const mainDealerFiltered = useMemo(
     () =>
       selectedDealers.length > 0
         ? posts.filter((p) => p.main_dealer && selectedDealers.includes(p.main_dealer))
@@ -78,10 +81,31 @@ export default function TrendSection({ posts }: Props) {
     [posts, selectedDealers],
   )
 
+  const filteredPosts = useMemo(
+    () =>
+      selectedAccounts.length > 0
+        ? mainDealerFiltered.filter((p) => selectedAccounts.includes(p.account_username))
+        : mainDealerFiltered,
+    [mainDealerFiltered, selectedAccounts],
+  )
+
+  const accountOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const p of mainDealerFiltered) {
+      if (!seen.has(p.account_username)) {
+        seen.set(p.account_username, p.dealer_name ?? p.account_username)
+      }
+    }
+    return Array.from(seen.entries()).sort((a, b) => a[1].localeCompare(b[1]))
+  }, [mainDealerFiltered])
+
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setDropdownOpen(false)
+      }
+      if (accountDropdownRef.current && !accountDropdownRef.current.contains(e.target as Node)) {
+        setAccountDropdownOpen(false)
       }
     }
     document.addEventListener('mousedown', handleClick)
@@ -92,11 +116,24 @@ export default function TrendSection({ posts }: Props) {
     setSelectedDealers((prev) =>
       prev.includes(dealer) ? prev.filter((d) => d !== dealer) : [...prev, dealer],
     )
+    setSelectedAccounts([])
   }
 
   function clearDealers() {
     setSelectedDealers([])
     setDropdownOpen(false)
+    setSelectedAccounts([])
+  }
+
+  function toggleAccount(username: string) {
+    setSelectedAccounts((prev) =>
+      prev.includes(username) ? prev.filter((u) => u !== username) : [...prev, username],
+    )
+  }
+
+  function clearAccounts() {
+    setSelectedAccounts([])
+    setAccountDropdownOpen(false)
   }
 
   const { chartData, groups } = useMemo(() => {
@@ -167,7 +204,7 @@ export default function TrendSection({ posts }: Props) {
     return (
       <section className="mt-14">
         <div className="mb-5">
-          <h2 className="section-heading">Trend & Content Activity</h2>
+          <h2 className="section-heading">Performance Trend</h2>
           <hr className="section-rule mt-3" />
         </div>
         <div
@@ -185,9 +222,9 @@ export default function TrendSection({ posts }: Props) {
   return (
     <section className="mt-14">
       <div className="mb-5">
-        <h2 className="section-heading">Trend & Content Activity</h2>
+        <h2 className="section-heading">Performance Trend</h2>
         <p className="font-mulish mt-1" style={{ fontSize: '11.5px', color: '#555555' }}>
-          18 – 31 Mei 2026 &nbsp;&middot;&nbsp; {metricLabel} over time
+          18 – 31 May 2026 &nbsp;&middot;&nbsp; {metricLabel} over time
         </p>
         <hr className="section-rule mt-3" />
       </div>
@@ -206,7 +243,7 @@ export default function TrendSection({ posts }: Props) {
               whiteSpace: 'nowrap',
             }}
           >
-            Filter by Main Dealer
+            Filter
           </span>
           <div ref={dropdownRef} style={{ position: 'relative' }}>
             <button
@@ -303,11 +340,93 @@ export default function TrendSection({ posts }: Props) {
             )}
           </div>
 
-          {selectedDealers.length > 0 && (
-            <span className="font-mulish" style={{ fontSize: '10px', color: '#9CA3AF' }}>
-              {filteredPosts.length} of {posts.length} posts
-            </span>
-          )}
+          {/* Account dropdown */}
+          <div ref={accountDropdownRef} style={{ position: 'relative' }}>
+            <button
+              onClick={() => setAccountDropdownOpen((o) => !o)}
+              className="font-mulish font-semibold flex items-center gap-2"
+              style={{
+                fontSize: '10px',
+                padding: '5px 10px',
+                border: '1px solid',
+                borderColor: selectedAccounts.length > 0 ? '#E62533' : '#D1D5DB',
+                background: '#fff',
+                color: selectedAccounts.length > 0 ? '#E62533' : '#6B7280',
+                cursor: 'pointer',
+                letterSpacing: '0.3px',
+                minWidth: 160,
+                justifyContent: 'space-between',
+              }}
+            >
+              <span>
+                {selectedAccounts.length === 0
+                  ? 'All Accounts'
+                  : selectedAccounts.length === 1
+                    ? (accountOptions.find(([u]) => u === selectedAccounts[0])?.[1] ?? selectedAccounts[0])
+                    : `${selectedAccounts.length} accounts selected`}
+              </span>
+              <span style={{ fontSize: '8px', marginLeft: 4 }}>{accountDropdownOpen ? '▲' : '▼'}</span>
+            </button>
+
+            {accountDropdownOpen && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 4px)',
+                  left: 0,
+                  zIndex: 60,
+                  background: '#fff',
+                  border: '1px solid #E5E7EB',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+                  minWidth: 240,
+                  maxHeight: 260,
+                  overflowY: 'auto',
+                }}
+              >
+                <div style={{ borderBottom: '1px solid #F0F0F0' }}>
+                  <button
+                    onClick={clearAccounts}
+                    className="font-mulish font-semibold w-full text-left"
+                    style={{
+                      fontSize: '10px',
+                      padding: '8px 12px',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      color: selectedAccounts.length > 0 ? '#E62533' : '#9CA3AF',
+                      letterSpacing: '0.3px',
+                    }}
+                  >
+                    {selectedAccounts.length > 0 ? '✕ Clear filter' : 'All Accounts'}
+                  </button>
+                </div>
+                {accountOptions.map(([username, label]) => {
+                  const checked = selectedAccounts.includes(username)
+                  return (
+                    <label
+                      key={username}
+                      className="flex items-center gap-2.5 cursor-pointer"
+                      style={{
+                        padding: '8px 12px',
+                        borderBottom: '1px solid #F9F9F9',
+                        background: checked ? '#FFF5F5' : '#fff',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleAccount(username)}
+                        style={{ accentColor: '#E62533', width: 12, height: 12, flexShrink: 0 }}
+                      />
+                      <span className="font-mulish" style={{ fontSize: '10.5px', color: '#374151', flex: 1 }}>
+                        {label}
+                      </span>
+                    </label>
+                  )
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Timeframe */}

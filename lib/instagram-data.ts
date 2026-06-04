@@ -1,3 +1,4 @@
+import { cacheLife } from 'next/cache'
 import { supabase } from './supabase'
 import type { InstagramAccount, PillarLabel, Post, PostCategory, PostFormat, TrendRawPost } from './types'
 
@@ -23,6 +24,8 @@ function formatPostDate(iso: string | null): string {
 }
 
 export async function getTopPosts(): Promise<Post[]> {
+  'use cache'
+  cacheLife('max')
   const { data: posts } = await supabase
     .from('instagram_posts')
     .select('post_id, account_username, thumbnail_url, caption, likes_count, comments_count, views_count, post_date, post_type, pillar, post_url')
@@ -57,6 +60,8 @@ export async function getTopPosts(): Promise<Post[]> {
 }
 
 export async function getTrendData(): Promise<TrendRawPost[]> {
+  'use cache'
+  cacheLife('max')
   const { data: posts } = await supabase
     .from('instagram_posts')
     .select('post_date, likes_count, views_count, comments_count, pillar, account_username')
@@ -93,6 +98,8 @@ const ALL_PILLARS: PillarLabel[] = [
 ]
 
 export async function getInstagramAccounts(): Promise<InstagramAccount[]> {
+  'use cache'
+  cacheLife('max')
   const { data: accounts, error: accErr } = await supabase
     .from('instagram_accounts')
     .select('username, full_name, profile_picture_url, followers_count, main_dealer, dealer_name')

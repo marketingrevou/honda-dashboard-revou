@@ -6,8 +6,6 @@ import TrendSection from '../components/TrendSection'
 import Footer from '../components/Footer'
 import { logout } from '@/app/actions/auth'
 
-export const dynamic = 'force-dynamic'
-
 export default async function DashboardPage() {
   const [instagramAccounts, topPosts, trendPosts] = await Promise.all([
     getInstagramAccounts(),

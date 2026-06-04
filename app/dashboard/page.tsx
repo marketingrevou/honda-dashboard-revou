@@ -1,0 +1,48 @@
+import { getInstagramAccounts, getTopPosts, getTrendData } from '@/lib/instagram-data'
+import Header from '../components/Header'
+import PostsSection from '../components/PostsSection'
+import InstagramSection from '../components/InstagramSection'
+import TrendSection from '../components/TrendSection'
+import Footer from '../components/Footer'
+import { logout } from '@/app/actions/auth'
+
+export const dynamic = 'force-dynamic'
+
+export default async function DashboardPage() {
+  const [instagramAccounts, topPosts, trendPosts] = await Promise.all([
+    getInstagramAccounts(),
+    getTopPosts(),
+    getTrendData(),
+  ])
+
+  const totalPosts = instagramAccounts.reduce((s, a) => s + a.post_count, 0)
+
+  return (
+    <>
+      <Header
+        dateRange="18 – 31 May 2026"
+        accountCount={10}
+        accounts={[
+          '@hondaaristadepok.official',
+          '@hondaaristajatinegara.id',
+          '@hondaaristamanggadua.id',
+          '@hondamulyaputra',
+          '@honda.autobest',
+          '@hondaanugerah_official',
+          '@hondabintang_official',
+          '@hondadaim',
+          '@hondamandalasenamlg',
+          '@hondamajupalembang',
+        ]}
+        postCount={totalPosts}
+        logoutAction={logout as () => Promise<void>}
+      />
+      <main className="max-w-screen-xl mx-auto px-6 pb-16">
+        <InstagramSection accounts={instagramAccounts} />
+        <TrendSection posts={trendPosts} />
+        <PostsSection posts={topPosts} />
+      </main>
+      <Footer />
+    </>
+  )
+}

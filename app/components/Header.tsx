@@ -5,9 +5,10 @@ interface HeaderProps {
   accountCount: number
   accounts: string[]
   postCount: number
+  logoutAction?: () => Promise<void>
 }
 
-export default function Header({ dateRange, accountCount, accounts, postCount }: HeaderProps) {
+export default function Header({ dateRange, accountCount, accounts, postCount, logoutAction }: HeaderProps) {
   return (
     <header className="bg-white" style={{ borderTop: '4px solid #E62533', borderBottom: '1px solid #E5E7EB' }}>
       <div className="max-w-screen-xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 flex-wrap lg:flex-nowrap">
@@ -31,6 +32,16 @@ export default function Header({ dateRange, accountCount, accounts, postCount }:
           <span className="meta-chip text-white" style={{ background: '#333333' }}>
             {postCount} Posts
           </span>
+          {logoutAction && (
+            <form action={logoutAction}>
+              <button
+                type="submit"
+                style={{ fontSize: '12px', color: '#999999', background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px' }}
+              >
+                Sign Out
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </header>

@@ -235,6 +235,7 @@ export default function InstagramSection({ accounts }: Props) {
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([])
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false)
   const accountDropdownRef = useRef<HTMLDivElement>(null)
+  const [expanded, setExpanded] = useState(false)
 
   const openModal = useCallback((username: string, fullName: string, pillar: PillarLabel | null) => {
     setModal({ username, fullName, pillar })
@@ -623,9 +624,18 @@ export default function InstagramSection({ accounts }: Props) {
           </button>
         </div>
 
-        <div className="overflow-x-auto" style={{ border: '1px solid #E5E7EB', background: '#fff' }}>
+        <div
+          style={{
+            border: '1px solid #E5E7EB',
+            background: '#fff',
+            overflowX: 'auto',
+            overflowY: 'auto',
+            maxHeight: expanded ? 'none' : 324,
+            transition: 'max-height 0.2s ease',
+          }}
+        >
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
+            <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
               <tr style={{ borderBottom: '2px solid #E5E7EB', background: '#F7F7F7' }}>
                 {headers.map((h) => {
                   const pillarEntry = PILLAR_COLS.find(p => p.label === h)
@@ -741,6 +751,28 @@ export default function InstagramSection({ accounts }: Props) {
             </tbody>
           </table>
         </div>
+
+        {sorted.length > 5 && (
+          <button
+            onClick={() => setExpanded(e => !e)}
+            className="font-mulish font-semibold flex items-center gap-1.5 w-full justify-center"
+            style={{
+              marginTop: '1px',
+              padding: '9px',
+              background: '#FAFAFA',
+              border: '1px solid #E5E7EB',
+              borderTop: 'none',
+              color: '#6B7280',
+              fontSize: '10px',
+              cursor: 'pointer',
+              letterSpacing: '0.3px',
+            }}
+          >
+            {expanded
+              ? <>▲ &nbsp;Collapse</>
+              : <>▼ &nbsp;Show all {sorted.length} accounts</>}
+          </button>
+        )}
       </section>
     </>
   )

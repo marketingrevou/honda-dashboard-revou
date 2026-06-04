@@ -11,7 +11,7 @@ export default function PostsSection({ posts }: PostsSectionProps) {
       <div className="mb-5">
         <h2 className="section-heading">Top 10 Post</h2>
         <p className="font-mulish mt-1" style={{ fontSize: '11.5px', color: '#555555' }}>
-          10 konten dengan likes tertinggi dari 10 akun dealer &nbsp;&middot;&nbsp; 1 Mei – 2 Jun 2026 &nbsp;&middot;&nbsp; Diurutkan berdasarkan likes
+          10 konten dengan likes tertinggi dari 10 akun dealer &nbsp;&middot;&nbsp; 18 – 31 Mei 2026 &nbsp;&middot;&nbsp; Diurutkan berdasarkan likes
         </p>
         <hr className="section-rule mt-3" />
       </div>

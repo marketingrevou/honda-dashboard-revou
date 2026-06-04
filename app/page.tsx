@@ -1,8 +1,6 @@
-import { DUMMY_PILLARS } from '@/lib/dummy-data'
 import { getInstagramAccounts, getTopPosts, getTrendData } from '@/lib/instagram-data'
 import Header from './components/Header'
 import PostsSection from './components/PostsSection'
-import PillarsSection from './components/PillarsSection'
 import InstagramSection from './components/InstagramSection'
 import TrendSection from './components/TrendSection'
 import Footer from './components/Footer'
@@ -21,7 +19,7 @@ export default async function DashboardPage() {
   return (
     <>
       <Header
-        dateRange="1 Mei – 2 Jun 2026"
+        dateRange="18 – 31 Mei 2026"
         accountCount={10}
         accounts={[
           '@hondaaristadepok.official',
@@ -41,7 +39,6 @@ export default async function DashboardPage() {
         <PostsSection posts={topPosts} />
         <InstagramSection accounts={instagramAccounts} />
         <TrendSection posts={trendPosts} />
-        <PillarsSection pillars={DUMMY_PILLARS} />
       </main>
       <Footer />
     </>

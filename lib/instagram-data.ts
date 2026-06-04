@@ -26,6 +26,8 @@ export async function getTopPosts(limit = 10): Promise<Post[]> {
   const { data: posts } = await supabase
     .from('instagram_posts')
     .select('post_id, account_username, thumbnail_url, caption, likes_count, comments_count, post_date, post_type, pillar, post_url')
+    .gte('post_date', '2026-05-18')
+    .lte('post_date', '2026-05-31')
     .order('likes_count', { ascending: false })
     .limit(limit)
 
@@ -58,6 +60,8 @@ export async function getTrendData(): Promise<TrendRawPost[]> {
   const { data: posts } = await supabase
     .from('instagram_posts')
     .select('post_date, likes_count, views_count, comments_count, pillar, account_username')
+    .gte('post_date', '2026-05-18')
+    .lte('post_date', '2026-05-31')
     .order('post_date', { ascending: true })
 
   if (!posts?.length) return []
@@ -101,6 +105,8 @@ export async function getInstagramAccounts(): Promise<InstagramAccount[]> {
     .select(
       'account_username, likes_count, comments_count, views_count, post_date, pillar, thumbnail_url',
     )
+    .gte('post_date', '2026-05-18')
+    .lte('post_date', '2026-05-31')
 
   if (postErr) return []
 

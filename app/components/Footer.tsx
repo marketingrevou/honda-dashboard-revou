@@ -1,7 +1,7 @@
 export default function Footer() {
   return (
     <footer style={{ background: '#333333', color: '#CCCCCC', marginTop: '4rem', borderTop: '3px solid #E62533' }}>
-      <div className="max-w-screen-xl mx-auto px-6 py-5 flex items-center justify-between">
+      <div className="max-w-screen-xl mx-auto px-6 py-4 sm:py-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-3">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import type { InstagramAccount, PillarLabel } from '@/lib/types'
 import { PILLAR_COLOR } from '@/lib/types'
 import { supabase } from '@/lib/supabase'
+import { exportAccountsCSV } from '@/lib/export-csv'
 
 function proxied(src: string): string {
   if (!src || src.startsWith('/') || src.startsWith('data:')) return src
@@ -55,6 +56,8 @@ function PostsModal({ modal, onClose }: { modal: ModalState; onClose: () => void
       .from('instagram_posts')
       .select('post_id, post_date, caption, post_url, pillar')
       .eq('account_username', modal.username)
+      .gte('post_date', '2026-05-18')
+      .lte('post_date', '2026-05-31')
       .order('post_date', { ascending: false })
 
     if (modal.pillar) {
@@ -276,7 +279,7 @@ export default function InstagramSection({ accounts }: Props) {
         <div className="mb-5">
           <h2 className="section-heading">Instagram Account Performance</h2>
           <p className="font-mulish mt-1" style={{ fontSize: '11.5px', color: '#555555' }}>
-            1 Mei – 2 Jun 2026 &nbsp;&middot;&nbsp; 10 akun dealer Honda
+            18 – 31 Mei 2026 &nbsp;&middot;&nbsp; 10 akun dealer Honda
           </p>
           <hr className="section-rule mt-3" />
         </div>
@@ -303,7 +306,7 @@ export default function InstagramSection({ accounts }: Props) {
         <div className="mb-5">
           <h2 className="section-heading">Instagram Account Performance</h2>
           <p className="font-mulish mt-1" style={{ fontSize: '11.5px', color: '#555555' }}>
-            1 Mei – 2 Jun 2026 &nbsp;&middot;&nbsp; {filtered.length} akun dealer
+            18 – 31 Mei 2026 &nbsp;&middot;&nbsp; {filtered.length} akun dealer
             &nbsp;&middot;&nbsp; {totalPosts} post
             &nbsp;&middot;&nbsp; {totalLikes.toLocaleString('id-ID')} likes
             {totalViews > 0 && <> &nbsp;&middot;&nbsp; {totalViews.toLocaleString('id-ID')} views</>}
@@ -312,7 +315,7 @@ export default function InstagramSection({ accounts }: Props) {
         </div>
 
         {/* Main Dealer dropdown checklist */}
-        <div className="flex items-center gap-3 mb-4">
+        <div className="flex items-center gap-3 mb-4 flex-wrap">
           <span className="font-mulish font-semibold" style={{ fontSize: '10px', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
             Filter by Main Dealer
           </span>
@@ -413,6 +416,26 @@ export default function InstagramSection({ accounts }: Props) {
               Showing {filtered.length} of {accounts.length} accounts
             </span>
           )}
+
+          <button
+            onClick={() => exportAccountsCSV(sorted, 'honda-instagram-performance.csv')}
+            className="font-mulish font-semibold flex items-center gap-1.5 ml-auto"
+            style={{
+              fontSize: '10px',
+              padding: '5px 10px',
+              border: '1px solid #E62533',
+              background: '#fff',
+              color: '#E62533',
+              cursor: 'pointer',
+              letterSpacing: '0.3px',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <svg width="11" height="11" viewBox="0 0 11 11" fill="none" aria-hidden="true">
+              <path d="M5.5 1v6M2.5 5l3 3 3-3M1 9.5h9" stroke="#E62533" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            Export CSV
+          </button>
         </div>
 
         <div className="overflow-x-auto" style={{ border: '1px solid #E5E7EB', background: '#fff' }}>

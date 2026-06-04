@@ -187,7 +187,7 @@ export default function TrendSection({ posts }: Props) {
       <div className="mb-5">
         <h2 className="section-heading">Trend & Content Activity</h2>
         <p className="font-mulish mt-1" style={{ fontSize: '11.5px', color: '#555555' }}>
-          1 Mei – 2 Jun 2026 &nbsp;&middot;&nbsp; {metricLabel} over time
+          18 – 31 Mei 2026 &nbsp;&middot;&nbsp; {metricLabel} over time
         </p>
         <hr className="section-rule mt-3" />
       </div>

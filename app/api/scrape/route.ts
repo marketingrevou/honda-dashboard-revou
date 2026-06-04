@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { ApifyClient } from 'apify-client'
 import { createClient } from '@supabase/supabase-js'
+import Anthropic from '@anthropic-ai/sdk'
+import { classifyPillarWithVision } from '@/lib/classify-pillar'
 
 const ACCOUNTS = [
   'hondaaristadepok.official',
@@ -15,54 +17,13 @@ const ACCOUNTS = [
   'hondamajupalembang',
 ]
 
-const PILLAR_KEYWORDS: Record<string, string[]> = {
-  'Product Value & Information': [
-    'brv', 'hrv', 'wrv', 'crv', 'brio', 'city', 'accord', 'odyssey', 'jazz',
-    'civic', 'mobilio', 'br-v', 'hr-v', 'wr-v', 'cr-v', 'e:hev', 'ehev',
-    'hybrid', 'fitur', 'spesifikasi', 'specs', 'test drive', 'testdrive',
-    'mesin', 'engine', 'bbm', 'bahan bakar', 'konsumsi', 'torsi', 'transmisi',
-    'cvt', 'tips', 'perawatan', 'servis', 'service', 'bengkel', 'ganti oli',
-    'harga', 'price', 'otr', 'booking', 'indent', 'dp', 'cicilan', 'kredit',
-    'sensor', 'honda sensing', 'ground clearance', 'kapasitas', 'bagasi',
-  ],
-  'Dealer Credibility': [
-    'tim', 'team', 'mekanik', 'sales advisor', 'showroom', 'dealer',
-    'hari nasional', 'hari buruh', 'hari kemerdekaan', 'hari raya',
-    'lebaran', 'idul', 'natal', 'tahun baru', 'anniversary',
-    'operasional', 'tutup', 'buka', 'jam operasional',
-    'penghargaan', 'award', 'terbaik', 'kepercayaan',
-    'kenalan', 'profil', 'about us',
-  ],
-  'Customer Story': [
-    'testimoni', 'testimonial', 'customer', 'pelanggan', 'pembeli',
-    'serah terima', 'delivery', 'terima kunci', 'ambil unit',
-    'review', 'ulasan', 'pengalaman', 'cerita', 'story',
-    'puas', 'satisfied', 'rekomen', 'recommend',
-  ],
-  'Promo Activation': [
-    'promo', 'diskon', 'discount', 'cashback', 'bonus',
-    'quiz', 'kuis', 'giveaway', 'hadiah', 'prize', 'undian',
-    'event', 'pameran', 'exhibition', 'kontes', 'lomba',
-    'free', 'gratis', 'voucher', 'merchandise', 'gift',
-    'menang', 'pemenang', 'winner',
-  ],
-}
-
-function classifyPillar(caption: string): string {
-  if (!caption) return 'Negative'
-  const lower = caption.toLowerCase()
-  for (const [pillar, keywords] of Object.entries(PILLAR_KEYWORDS)) {
-    if (keywords.some((kw) => lower.includes(kw))) return pillar
-  }
-  return 'Negative'
-}
-
 export async function POST() {
   const apify = new ApifyClient({ token: process.env.APIFY_TOKEN })
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
   )
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
   const results: Record<string, unknown>[] = []
 
@@ -119,7 +80,11 @@ export async function POST() {
       })
 
       for (const p of filtered as Record<string, unknown>[]) {
-        const pillar = classifyPillar((p.caption as string) || '')
+        const pillar = await classifyPillarWithVision(
+          anthropic,
+          (p.caption as string) || '',
+          (p.displayUrl as string) || (p.thumbnailUrl as string) || null,
+        )
         await supabase.from('instagram_posts').upsert(
           {
             account_username: username,

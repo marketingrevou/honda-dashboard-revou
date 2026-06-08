@@ -81,6 +81,7 @@ export interface InstagramPost {
   post_date: string | null
   post_type: string | null
   pillar: PillarLabel
+  classification_source: 'combined-vision' | 'caption-ai' | null
 }
 
 export interface TrendRawPost {

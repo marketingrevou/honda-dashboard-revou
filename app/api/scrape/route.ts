@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server'
 import { ApifyClient } from 'apify-client'
 import { createClient } from '@supabase/supabase-js'
-import Anthropic from '@anthropic-ai/sdk'
-import { classifyPillarWithVision } from '@/lib/classify-pillar'
+import { classifyPillar } from '@/lib/classify-pillar'
 
 const ACCOUNTS = [
   'hondaaristadepok.official',
@@ -23,7 +22,6 @@ export async function POST() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
   )
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
   const results: Record<string, unknown>[] = []
 
@@ -80,8 +78,7 @@ export async function POST() {
       })
 
       for (const p of filtered as Record<string, unknown>[]) {
-        const pillar = await classifyPillarWithVision(
-          anthropic,
+        const { pillar, source } = await classifyPillar(
           (p.caption as string) || '',
           (p.displayUrl as string) || (p.thumbnailUrl as string) || null,
         )
@@ -101,6 +98,7 @@ export async function POST() {
             post_date: (p.timestamp as string) || null,
             post_type: (p.type as string) || 'image',
             pillar,
+            classification_source: source,
           },
           { onConflict: 'post_id' },
         )

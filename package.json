@@ -13,6 +13,7 @@
     "@supabase/supabase-js": "^2.107.0",
     "apify-client": "^2.23.3",
     "next": "16.2.7",
+    "openai": "^6.42.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "recharts": "^3.8.1"
@@ -26,6 +27,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.7",
     "tailwindcss": "^4",
+    "tsx": "^4.22.4",
     "typescript": "^5"
   }
 }

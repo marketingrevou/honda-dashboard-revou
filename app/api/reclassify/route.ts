@@ -1,18 +1,16 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import Anthropic from '@anthropic-ai/sdk'
-import { classifyWithVision } from '@/lib/classify-pillar'
+import { classifyPillar } from '@/lib/classify-pillar'
 
 export async function POST() {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return NextResponse.json({ error: 'ANTHROPIC_API_KEY not set' }, { status: 500 })
+  if (!process.env.OPENAI_API_KEY) {
+    return NextResponse.json({ error: 'OPENAI_API_KEY not set' }, { status: 500 })
   }
 
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
   )
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
   // Fetch all Negative posts that have a thumbnail
   const { data: posts, error } = await supabase
@@ -29,12 +27,12 @@ export async function POST() {
 
   for (const post of posts) {
     try {
-      const newPillar = await classifyWithVision(anthropic, post.thumbnail_url)
+      const { pillar: newPillar, source } = await classifyPillar(post.caption, post.thumbnail_url)
 
       if (newPillar !== 'Negative') {
         await supabase
           .from('instagram_posts')
-          .update({ pillar: newPillar })
+          .update({ pillar: newPillar, classification_source: source })
           .eq('post_id', post.post_id)
       }
 

@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 
 export const PILLAR_KEYWORDS: Record<string, string[]> = {
   'Product Value & Information': [
@@ -43,57 +43,119 @@ export const VALID_PILLARS = [
 
 export type PillarResult = typeof VALID_PILLARS[number]
 
-export function classifyByCaption(caption: string): PillarResult {
-  if (!caption) return 'Negative'
-  const lower = caption.toLowerCase()
-  for (const [pillar, keywords] of Object.entries(PILLAR_KEYWORDS)) {
-    if (keywords.some((kw) => lower.includes(kw))) return pillar as PillarResult
-  }
-  return 'Negative'
+// ─── Shared prompt blocks ─────────────────────────────────────────────────────
+
+const POSITIVE_PILLARS = `Pillar konten:
+- Product Value & Information: model mobil, spesifikasi, fitur, harga, DP/cicilan/kredit, test drive, tips servis/perawatan
+- Dealer Credibility: foto tim/staf, ucapan hari raya, info showroom, penghargaan, jam operasional, kegiatan CSR/komunitas
+- Customer Story: testimoni customer, serah terima/delivery unit, review pembeli, customer bahagia dengan mobilnya
+- Promo Activation: promo, diskon, cashback, giveaway, event, penawaran tukar tambah, bunga 0%`
+
+const NEGATIVE_CRITERIA = `- Negative: HANYA untuk konten yang benar-benar berbahaya atau tidak sesuai brand, sesuai salah satu dari 6 kategori ini:
+  1. Internal Complaint / Self-Downgrading — staf mengeluh soal pekerjaan/target ("capek jadi sales", "3 bulan belum closing", "sales dikejar target terus")
+  2. Clickbait / Viral tanpa Value — video trend/joget tanpa menampilkan mobil, meme random tidak terkait otomotif, caption tidak ada hubungannya dengan produk
+  3. Negative Customer Handling — menyindir customer, share komplain customer tanpa solusi, caption yang menyalahkan customer
+  4. Unprofessional Content — bahasa kasar atau terlalu slang, curhat masalah pekerjaan, visual lingkungan kerja yang tidak rapi secara negatif
+  5. Competitor Bashing — secara langsung menjatuhkan brand lain ("mobil brand X jelek", "jangan beli yang lain")
+  6. High Risk Content (Brand Safety) — SARA/hate speech, informasi hoaks, konten kekerasan atau tidak pantas
+  JANGAN gunakan Negative untuk konten yang generik, ambigu, atau sulit diklasifikasi — pilih pillar positif yang paling mendekati.`
+
+const PILLAR_DEFINITIONS = `${POSITIVE_PILLARS}
+${NEGATIVE_CRITERIA}`
+
+// ─── Prompts ──────────────────────────────────────────────────────────────────
+
+const CAPTION_AI_PROMPT = `Kamu mengklasifikasikan postingan Instagram dari dealer Honda di Indonesia.
+
+${PILLAR_DEFINITIONS}
+
+Jawab dengan HANYA nama pillar, tidak ada yang lain.
+
+Caption:
+`
+
+const COMBINED_PROMPT = `Kamu mengklasifikasikan postingan Instagram dari dealer Honda di Indonesia.
+Kamu memiliki teks caption DAN gambar postingan. Gunakan keduanya untuk klasifikasi terbaik.
+
+${PILLAR_DEFINITIONS}
+
+Jawab dengan HANYA nama pillar, tidak ada yang lain.`
+
+// ─── Caption-only fallback (gpt-4o-mini) ─────────────────────────────────────
+
+export async function classifyByCaptionAI(caption: string): Promise<PillarResult> {
+  if (!caption?.trim()) return 'Negative'
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  const response = await client.chat.completions.create({
+    model: 'gpt-4o-mini',
+    max_tokens: 50,
+    temperature: 0,
+    messages: [{ role: 'user', content: CAPTION_AI_PROMPT + caption }],
+  })
+  const text = response.choices[0]?.message?.content?.trim() ?? ''
+  return (VALID_PILLARS as readonly string[]).includes(text) ? (text as PillarResult) : 'Negative'
 }
 
-const VISION_PROMPT = `This is an Instagram post image from a Honda car dealer in Indonesia.
-Classify this image into exactly one of these content pillars:
-- Product Value & Information: car models, specs, features, pricing, test drive, service/maintenance
-- Dealer Credibility: staff/team photos, holiday greetings, showroom, awards, operational info, CSR/community activities
-- Customer Story: customer testimonials, car handover/delivery, buyer reviews, happy customers with their car
-- Promo Activation: promotions, discounts, cashback, giveaways, events, trade-in offers, 0% interest
-- Negative: ONLY for content that is harmful or off-brand — internal complaints about the job ("capek jadi sales", "belum closing"), clickbait/dance trends with no car shown, mocking customers, unprofessional behavior, competitor bashing, or brand-safety risks (hate speech, hoax, inappropriate content). Do NOT use Negative just because the post is generic or hard to classify — assign the closest positive pillar instead.
+// ─── Step 2: Combined caption + image (gpt-4o-mini) ──────────────────────────
 
-Reply with ONLY the pillar name, nothing else.`
+async function fetchImageAsBase64(imageUrl: string): Promise<{ base64: string; mediaType: string }> {
+  // Instagram CDN URLs are auth-gated — must fetch ourselves before sending to OpenAI
+  const imgRes = await fetch(imageUrl)
+  const buffer = await imgRes.arrayBuffer()
+  const base64 = Buffer.from(buffer).toString('base64')
+  const mediaType = imgRes.headers.get('content-type') ?? 'image/jpeg'
+  return { base64, mediaType }
+}
 
-export async function classifyWithVision(
-  client: Anthropic,
+export async function classifyWithCombinedAnalysis(
+  caption: string,
   imageUrl: string,
 ): Promise<PillarResult> {
-  const message = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
+  const { base64, mediaType } = await fetchImageAsBase64(imageUrl)
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  const response = await client.chat.completions.create({
+    model: 'gpt-4o-mini',
     max_tokens: 50,
+    temperature: 0,
     messages: [
       {
         role: 'user',
         content: [
-          { type: 'image', source: { type: 'url', url: imageUrl } },
-          { type: 'text', text: VISION_PROMPT },
+          {
+            type: 'image_url',
+            image_url: { url: `data:${mediaType};base64,${base64}`, detail: 'low' },
+          },
+          {
+            type: 'text',
+            text: `${COMBINED_PROMPT}\n\nCaption: ${caption || '(tidak ada caption)'}`,
+          },
         ],
       },
     ],
   })
-  const text = (message.content[0] as { type: string; text: string }).text.trim()
+  const text = response.choices[0]?.message?.content?.trim() ?? ''
   return (VALID_PILLARS as readonly string[]).includes(text) ? (text as PillarResult) : 'Negative'
 }
 
-export async function classifyPillarWithVision(
-  client: Anthropic,
+// ─── Main pipeline ────────────────────────────────────────────────────────────
+//
+// Always uses gpt-4o-mini with caption + image when an image is available.
+// Falls back to caption-only gpt-4o-mini if no image or vision fetch fails.
+
+export async function classifyPillar(
   caption: string,
   imageUrl: string | null,
-): Promise<PillarResult> {
-  const captionResult = classifyByCaption(caption)
-  if (captionResult !== 'Negative') return captionResult
-  if (!imageUrl) return 'Negative'
-  try {
-    return await classifyWithVision(client, imageUrl)
-  } catch {
-    return 'Negative'
+): Promise<{ pillar: PillarResult; source: 'combined-vision' | 'caption-ai' }> {
+  if (imageUrl) {
+    try {
+      const pillar = await classifyWithCombinedAnalysis(caption, imageUrl)
+      return { pillar, source: 'combined-vision' }
+    } catch {
+      // image fetch or vision call failed — fall through to caption-only
+    }
   }
+
+  const pillar = await classifyByCaptionAI(caption)
+  return { pillar, source: 'caption-ai' }
 }
+

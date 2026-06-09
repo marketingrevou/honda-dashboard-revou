@@ -1,6 +1,15 @@
 import { createClient } from '@supabase/supabase-js'
 import { classifyPillar } from '@/lib/classify-pillar'
 
+export function makeSupabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_SUPABASE_SERVICE_ROLE_KEY!,
+  )
+}
+
+type Supabase = ReturnType<typeof makeSupabase>
+
 export const ACCOUNTS = [
   'imorasentul', 'hondakebonjerukofficial', 'hondamitralentengagung', 'hondapasarminggu',
   'honda.lppm', 'hondastarmotortasik_official', 'hondaautoserangofficial', 'hondasonic368',
@@ -77,7 +86,7 @@ async function processAccount(
   username: string,
   dateFrom: Date,
   dateTo: Date,
-  supabase: ReturnType<typeof createClient>,
+  supabase: Supabase,
 ): Promise<AccountResult> {
   try {
     const profile = await fetchUserInfo(username)
@@ -162,7 +171,7 @@ export interface UpdateResult {
 }
 
 export async function runUpdate(
-  supabase: ReturnType<typeof createClient>,
+  supabase: Supabase,
   dateFrom?: Date,
   dateTo?: Date,
 ): Promise<UpdateResult> {
@@ -207,11 +216,4 @@ export async function runUpdate(
     postsAdded,
     ...(errors.length > 0 && { errors }),
   }
-}
-
-export function makeSupabase() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_SUPABASE_SERVICE_ROLE_KEY!,
-  )
 }

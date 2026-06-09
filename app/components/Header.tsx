@@ -1,14 +1,20 @@
+import { ReactNode } from 'react'
 import AccountsChip from './AccountsChip'
+import DateRangePicker from './DateRangePicker'
 
 interface HeaderProps {
-  dateRange: string
+  dateFrom: string
+  dateTo: string
+  minDate: string
+  maxDate: string
   accountCount: number
   accounts: string[]
   postCount: number
   logoutAction?: () => Promise<void>
+  updateButton?: ReactNode
 }
 
-export default function Header({ dateRange, accountCount, accounts, postCount, logoutAction }: HeaderProps) {
+export default function Header({ dateFrom, dateTo, minDate, maxDate, accountCount, accounts, postCount, logoutAction, updateButton }: HeaderProps) {
   return (
     <header className="bg-white" style={{ borderTop: '4px solid #E62533', borderBottom: '1px solid #E5E7EB' }}>
       <div className="max-w-screen-xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 flex-wrap lg:flex-nowrap">
@@ -25,13 +31,18 @@ export default function Header({ dateRange, accountCount, accounts, postCount, l
           </h1>
         </div>
         <div className="w-full lg:w-auto flex items-center gap-1.5 sm:gap-2 flex-wrap">
-          <span className="meta-chip" style={{ background: '#F0F0F0', color: '#555555' }}>
-            {dateRange}
-          </span>
+          <DateRangePicker
+            key={`${dateFrom}-${dateTo}`}
+            dateFrom={dateFrom}
+            dateTo={dateTo}
+            minDate={minDate}
+            maxDate={maxDate}
+          />
           <AccountsChip count={accountCount} accounts={accounts} />
           <span className="meta-chip text-white" style={{ background: '#333333' }}>
             {postCount} Posts
           </span>
+          {updateButton}
           {logoutAction && (
             <form action={logoutAction}>
               <button

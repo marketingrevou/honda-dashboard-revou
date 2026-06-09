@@ -29,9 +29,10 @@ const SORT_LABEL: Record<SortBy, string> = {
 
 interface PostsSectionProps {
   posts: Post[]
+  dateLabel: string
 }
 
-export default function PostsSection({ posts }: PostsSectionProps) {
+export default function PostsSection({ posts, dateLabel }: PostsSectionProps) {
   const [activePillar, setActivePillar] = useState<PillarLabel | 'All'>('All')
   const [sortBy, setSortBy] = useState<SortBy>('likes')
 
@@ -55,7 +56,7 @@ export default function PostsSection({ posts }: PostsSectionProps) {
         <h2 className="section-heading">Top 10 Post</h2>
         <p className="font-mulish mt-1" style={{ fontSize: '11.5px', color: '#555555' }}>
           Top 10 posts by {SORT_LABEL[sortBy].toLowerCase()} from {totalAccounts} dealer accounts
-          &nbsp;&middot;&nbsp; 18 – 31 May 2026
+          &nbsp;&middot;&nbsp; {dateLabel}
           {activePillar !== 'All' && (
             <> &nbsp;&middot;&nbsp; {activePillar}</>
           )}

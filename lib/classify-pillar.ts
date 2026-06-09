@@ -1,5 +1,7 @@
 import OpenAI from 'openai'
 
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+
 export const PILLAR_KEYWORDS: Record<string, string[]> = {
   'Product Value & Information': [
     'brv', 'hrv', 'wrv', 'crv', 'brio', 'city', 'accord', 'odyssey', 'jazz',
@@ -85,8 +87,7 @@ Jawab dengan HANYA nama pillar, tidak ada yang lain.`
 
 export async function classifyByCaptionAI(caption: string): Promise<PillarResult> {
   if (!caption?.trim()) return 'Negative'
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  const response = await client.chat.completions.create({
+  const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     max_tokens: 50,
     temperature: 0,
@@ -112,8 +113,7 @@ export async function classifyWithCombinedAnalysis(
   imageUrl: string,
 ): Promise<PillarResult> {
   const { base64, mediaType } = await fetchImageAsBase64(imageUrl)
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  const response = await client.chat.completions.create({
+  const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     max_tokens: 50,
     temperature: 0,

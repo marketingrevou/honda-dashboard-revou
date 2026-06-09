@@ -2,6 +2,11 @@ import { cacheLife } from 'next/cache'
 import { supabase } from './supabase'
 import type { InstagramAccount, PillarLabel, Post, PostCategory, PostFormat, TrendRawPost } from './types'
 
+export interface DateRange {
+  from: string
+  to?: string
+}
+
 function pillarToCategory(pillar: string | null): PostCategory {
   switch (pillar) {
     case 'Product Value & Information': return 'Product Info'
@@ -23,14 +28,25 @@ function formatPostDate(iso: string | null): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-export async function getTopPosts(): Promise<Post[]> {
+export async function getLatestPostDate(): Promise<string | null> {
+  const { data } = await supabase
+    .from('instagram_posts')
+    .select('post_date')
+    .order('post_date', { ascending: false })
+    .limit(1)
+    .single()
+  return data?.post_date ?? null
+}
+
+export async function getTopPosts(dateRange: DateRange): Promise<Post[]> {
   'use cache'
   cacheLife('max')
-  const { data: posts } = await supabase
+  let postsQuery = supabase
     .from('instagram_posts')
     .select('post_id, account_username, thumbnail_url, caption, likes_count, comments_count, views_count, post_date, post_type, pillar, post_url')
-    .gte('post_date', '2026-05-18')
-    .lte('post_date', '2026-05-31')
+    .gte('post_date', dateRange.from)
+  if (dateRange.to) postsQuery = postsQuery.lte('post_date', dateRange.to)
+  const { data: posts } = await postsQuery
 
   if (!posts?.length) return []
 
@@ -59,15 +75,15 @@ export async function getTopPosts(): Promise<Post[]> {
   }))
 }
 
-export async function getTrendData(): Promise<TrendRawPost[]> {
+export async function getTrendData(dateRange: DateRange): Promise<TrendRawPost[]> {
   'use cache'
   cacheLife('max')
-  const { data: posts } = await supabase
+  let trendQuery = supabase
     .from('instagram_posts')
     .select('post_date, likes_count, views_count, comments_count, pillar, account_username')
-    .gte('post_date', '2026-05-18')
-    .lte('post_date', '2026-05-31')
-    .order('post_date', { ascending: true })
+    .gte('post_date', dateRange.from)
+  if (dateRange.to) trendQuery = trendQuery.lte('post_date', dateRange.to)
+  const { data: posts } = await trendQuery.order('post_date', { ascending: true })
 
   if (!posts?.length) return []
 
@@ -97,7 +113,7 @@ const ALL_PILLARS: PillarLabel[] = [
   'Negative',
 ]
 
-export async function getInstagramAccounts(): Promise<InstagramAccount[]> {
+export async function getInstagramAccounts(dateRange: DateRange): Promise<InstagramAccount[]> {
   'use cache'
   cacheLife('max')
   const { data: accounts, error: accErr } = await supabase
@@ -107,13 +123,14 @@ export async function getInstagramAccounts(): Promise<InstagramAccount[]> {
 
   if (accErr || !accounts?.length) return []
 
-  const { data: posts, error: postErr } = await supabase
+  let accountPostsQuery = supabase
     .from('instagram_posts')
     .select(
       'account_username, likes_count, comments_count, views_count, post_date, pillar, thumbnail_url',
     )
-    .gte('post_date', '2026-05-18')
-    .lte('post_date', '2026-05-31')
+    .gte('post_date', dateRange.from)
+  if (dateRange.to) accountPostsQuery = accountPostsQuery.lte('post_date', dateRange.to)
+  const { data: posts, error: postErr } = await accountPostsQuery
 
   if (postErr) return []
 

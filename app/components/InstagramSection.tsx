@@ -33,6 +33,8 @@ interface ModalState {
   username: string
   fullName: string
   pillar: PillarLabel | null
+  dateFrom: string
+  dateTo: string
 }
 
 function formatNum(n: number): string {
@@ -56,8 +58,8 @@ function PostsModal({ modal, onClose }: { modal: ModalState; onClose: () => void
       .from('instagram_posts')
       .select('post_id, post_date, caption, post_url, pillar')
       .eq('account_username', modal.username)
-      .gte('post_date', '2026-05-18')
-      .lte('post_date', '2026-05-31')
+      .gte('post_date', modal.dateFrom)
+      .lte('post_date', modal.dateTo)
       .order('post_date', { ascending: false })
 
     if (modal.pillar) {
@@ -68,7 +70,7 @@ function PostsModal({ modal, onClose }: { modal: ModalState; onClose: () => void
       setPosts((data as ModalPost[]) ?? [])
       setLoading(false)
     })
-  }, [modal.username, modal.pillar])
+  }, [modal.username, modal.pillar, modal.dateFrom, modal.dateTo])
 
   const pillarEntry = modal.pillar ? PILLAR_COLS.find(p => p.key === modal.pillar) : null
 
@@ -225,9 +227,12 @@ function AccountCell({ account }: { account: InstagramAccount }) {
 
 interface Props {
   accounts: InstagramAccount[]
+  dateLabel: string
+  dateFrom: string
+  dateTo: string
 }
 
-export default function InstagramSection({ accounts }: Props) {
+export default function InstagramSection({ accounts, dateLabel, dateFrom, dateTo }: Props) {
   const [modal, setModal] = useState<ModalState | null>(null)
   const [selectedDealers, setSelectedDealers] = useState<string[]>([])
   const [dropdownOpen, setDropdownOpen] = useState(false)
@@ -238,8 +243,8 @@ export default function InstagramSection({ accounts }: Props) {
   const [expanded, setExpanded] = useState(false)
 
   const openModal = useCallback((username: string, fullName: string, pillar: PillarLabel | null) => {
-    setModal({ username, fullName, pillar })
-  }, [])
+    setModal({ username, fullName, pillar, dateFrom, dateTo })
+  }, [dateFrom, dateTo])
 
   const closeModal = useCallback(() => setModal(null), [])
 
@@ -313,7 +318,7 @@ export default function InstagramSection({ accounts }: Props) {
         <div className="mb-5">
           <h2 className="section-heading">Performance Overview</h2>
           <p className="font-mulish mt-1" style={{ fontSize: '11.5px', color: '#555555' }}>
-            18 – 31 May 2026 &nbsp;&middot;&nbsp; 10 Honda dealer accounts
+            {dateLabel} &nbsp;&middot;&nbsp; 10 Honda dealer accounts
           </p>
           <hr className="section-rule mt-3" />
         </div>
@@ -340,7 +345,7 @@ export default function InstagramSection({ accounts }: Props) {
         <div className="mb-5">
           <h2 className="section-heading">Performance Overview</h2>
           <p className="font-mulish mt-1" style={{ fontSize: '11.5px', color: '#555555' }}>
-            18 – 31 May 2026 &nbsp;&middot;&nbsp; {filtered.length} Honda dealer accounts
+            {dateLabel} &nbsp;&middot;&nbsp; {filtered.length} Honda dealer accounts
           </p>
           <hr className="section-rule mt-3" />
         </div>

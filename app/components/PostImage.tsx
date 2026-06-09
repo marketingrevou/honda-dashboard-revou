@@ -2,11 +2,6 @@
 
 import { useState } from 'react'
 
-function proxied(src: string): string {
-  if (!src || src.startsWith('/') || src.startsWith('data:')) return src
-  return `/api/image-proxy?url=${encodeURIComponent(src)}`
-}
-
 interface PostImageProps {
   src: string
   rank: number
@@ -24,7 +19,7 @@ export default function PostImage({ src, rank, alt }: PostImageProps) {
       ) : (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={proxied(src)}
+          src={src}
           alt={alt}
           className="w-full object-cover"
           style={{ aspectRatio: '1/1', display: 'block' }}

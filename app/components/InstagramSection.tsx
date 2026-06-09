@@ -6,11 +6,6 @@ import { PILLAR_COLOR } from '@/lib/types'
 import { supabase } from '@/lib/supabase'
 import { exportAccountsCSV } from '@/lib/export-csv'
 
-function proxied(src: string): string {
-  if (!src || src.startsWith('/') || src.startsWith('data:')) return src
-  return `/api/image-proxy?url=${encodeURIComponent(src)}`
-}
-
 const PILLAR_COLS: { key: PillarLabel; label: string }[] = [
   { key: 'Product Value & Information', label: 'Product Info' },
   { key: 'Dealer Credibility',          label: 'Credibility' },
@@ -191,7 +186,7 @@ function AccountCell({ account }: { account: InstagramAccount }) {
       {!imgErr && account.profile_picture_url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={proxied(account.profile_picture_url)}
+          src={account.profile_picture_url}
           alt={account.username}
           width={32}
           height={32}

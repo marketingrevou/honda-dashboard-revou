@@ -2,11 +2,6 @@
 
 import { useState } from 'react'
 
-function proxied(src: string): string {
-  if (!src || src.startsWith('/') || src.startsWith('data:')) return src
-  return `/api/image-proxy?url=${encodeURIComponent(src)}`
-}
-
 interface ProfileImageProps {
   src: string
   username: string
@@ -29,7 +24,7 @@ export default function ProfileImage({ src, username }: ProfileImageProps) {
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src={proxied(src)}
+      src={src}
       alt={username}
       width={28}
       height={28}

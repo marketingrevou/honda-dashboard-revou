@@ -3,7 +3,7 @@
  * Tests GPT-4o mini vision on a honda.arta thumbnail with empty caption.
  */
 
-import { classifyWithGPT4oMiniVision } from '@/lib/classify-pillar'
+import { classifyWithCombinedAnalysis } from '@/lib/classify-pillar'
 
 // Thumbnail from honda.arta post DYgcB81pji9 (carousel about Honda Step WGN event)
 const TEST_CASES = [
@@ -47,7 +47,7 @@ async function main() {
 
     console.log('  Calling GPT-4o mini vision...')
     const start = Date.now()
-    const result = await classifyWithGPT4oMiniVision(thumbnailUrl)
+    const result = await classifyWithCombinedAnalysis(caption, thumbnailUrl)
     const ms = Date.now() - start
 
     console.log(`  Result: [${result}]  (${ms}ms)`)

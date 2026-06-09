@@ -265,7 +265,7 @@ export default function TrendSection({ posts, dateLabel }: Props) {
             >
               <span>
                 {selectedDealers.length === 0
-                  ? 'All Dealers'
+                  ? 'Main Dealer'
                   : selectedDealers.length === 1
                     ? selectedDealers[0]
                     : `${selectedDealers.length} dealers selected`}
@@ -300,7 +300,7 @@ export default function TrendSection({ posts, dateLabel }: Props) {
                       letterSpacing: '0.3px',
                     }}
                   >
-                    {selectedDealers.length > 0 ? '✕ Clear filter' : 'All Dealers'}
+                    {selectedDealers.length > 0 ? '✕ Clear filter' : 'Main Dealer'}
                   </button>
                 </div>
                 {mainDealers.map((dealer) => {
@@ -361,7 +361,7 @@ export default function TrendSection({ posts, dateLabel }: Props) {
             >
               <span>
                 {selectedAccounts.length === 0
-                  ? 'All Accounts'
+                  ? 'Username Dealer'
                   : selectedAccounts.length === 1
                     ? (accountOptions.find(([u]) => u === selectedAccounts[0])?.[1] ?? selectedAccounts[0])
                     : `${selectedAccounts.length} accounts selected`}
@@ -398,7 +398,7 @@ export default function TrendSection({ posts, dateLabel }: Props) {
                       letterSpacing: '0.3px',
                     }}
                   >
-                    {selectedAccounts.length > 0 ? '✕ Clear filter' : 'All Accounts'}
+                    {selectedAccounts.length > 0 ? '✕ Clear filter' : 'Username Dealer'}
                   </button>
                 </div>
                 {accountOptions.map(([username, label]) => {

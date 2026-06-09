@@ -430,7 +430,7 @@ export default function InstagramSection({ accounts, dateLabel, dateFrom, dateTo
             >
               <span>
                 {selectedDealers.length === 0
-                  ? 'All Dealers'
+                  ? 'Main Dealer'
                   : selectedDealers.length === 1
                   ? selectedDealers[0]
                   : `${selectedDealers.length} dealers selected`}
@@ -466,7 +466,7 @@ export default function InstagramSection({ accounts, dateLabel, dateFrom, dateTo
                       letterSpacing: '0.3px',
                     }}
                   >
-                    {selectedDealers.length > 0 ? '✕ Clear filter' : 'All Dealers'}
+                    {selectedDealers.length > 0 ? '✕ Clear filter' : 'Main Dealer'}
                   </button>
                 </div>
 
@@ -523,7 +523,7 @@ export default function InstagramSection({ accounts, dateLabel, dateFrom, dateTo
             >
               <span>
                 {selectedAccounts.length === 0
-                  ? 'All Accounts'
+                  ? 'Username Dealer'
                   : selectedAccounts.length === 1
                   ? (mainDealerFiltered.find(a => a.username === selectedAccounts[0])?.full_name ?? selectedAccounts[0])
                   : `${selectedAccounts.length} accounts selected`}
@@ -561,7 +561,7 @@ export default function InstagramSection({ accounts, dateLabel, dateFrom, dateTo
                       letterSpacing: '0.3px',
                     }}
                   >
-                    {selectedAccounts.length > 0 ? '✕ Clear filter' : 'All Accounts'}
+                    {selectedAccounts.length > 0 ? '✕ Clear filter' : 'Username Dealer'}
                   </button>
                 </div>
 

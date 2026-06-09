@@ -4,7 +4,7 @@
  */
 
 import OpenAI from 'openai'
-import { classifyByCaption, VALID_PILLARS } from '@/lib/classify-pillar'
+import { VALID_PILLARS } from '@/lib/classify-pillar'
 import { createClient } from '@supabase/supabase-js'
 
 const MODELS = ['gpt-4o-mini', 'gpt-4.1-nano', 'gpt-4.1-mini', 'gpt-4o']

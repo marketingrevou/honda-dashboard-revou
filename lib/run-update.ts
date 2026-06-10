@@ -162,6 +162,84 @@ async function processAccount(
   }
 }
 
+export interface RefreshResult {
+  accountsProcessed: number
+  thumbnailsRefreshed: number
+  errors?: string[]
+}
+
+/**
+ * Refresh expiring CDN thumbnail URLs for every account that has posts in the
+ * DB. Instagram's signed thumbnail URLs expire after ~7 days, so this is meant
+ * to run on a daily cron to keep them fresh.
+ *
+ * For each account we fetch its latest 50 posts from RapidAPI and update
+ * thumbnail_url for any post_id we already have. Posts that have scrolled out
+ * of the recent-50 window can't be refreshed this way (the API no longer
+ * returns them) — those are handled separately via the Apify re-scrape.
+ */
+export async function refreshThumbnails(
+  supabase: Supabase,
+): Promise<RefreshResult> {
+  // Distinct accounts that actually have posts in the DB.
+  const { data: rows, error } = await supabase
+    .from('instagram_posts')
+    .select('account_username')
+    .not('account_username', 'is', null)
+
+  if (error) {
+    return { accountsProcessed: 0, thumbnailsRefreshed: 0, errors: [error.message] }
+  }
+
+  const accounts = [...new Set((rows ?? []).map((r) => r.account_username as string))]
+
+  let thumbnailsRefreshed = 0
+  const errors: string[] = []
+
+  for (let i = 0; i < accounts.length; i += BATCH_SIZE) {
+    const batch = accounts.slice(i, i + BATCH_SIZE)
+    const batchResults = await Promise.all(
+      batch.map(async (username) => {
+        try {
+          const posts = await fetchUserPosts(username, 50)
+          if (!posts.length) return 0
+
+          const updates = (posts as Record<string, unknown>[])
+            .filter((p) => p.id && p.thumbnail_url)
+            .map((p) => ({
+              post_id: String(p.id),
+              thumbnail_url: p.thumbnail_url as string,
+            }))
+
+          let refreshed = 0
+          for (const u of updates) {
+            const { error: upErr, count } = await supabase
+              .from('instagram_posts')
+              .update({ thumbnail_url: u.thumbnail_url }, { count: 'exact' })
+              .eq('post_id', u.post_id)
+            if (upErr) {
+              errors.push(`${username}/${u.post_id}: ${upErr.message}`)
+            } else if (count) {
+              refreshed += count
+            }
+          }
+          return refreshed
+        } catch (err) {
+          errors.push(`${username}: ${String(err)}`)
+          return 0
+        }
+      }),
+    )
+    thumbnailsRefreshed += batchResults.reduce((s, n) => s + n, 0)
+  }
+
+  return {
+    accountsProcessed: accounts.length,
+    thumbnailsRefreshed,
+    ...(errors.length > 0 && { errors }),
+  }
+}
+
 export interface UpdateResult {
   dateFrom: string
   dateTo: string

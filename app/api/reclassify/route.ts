@@ -29,12 +29,12 @@ export async function POST() {
     try {
       const { pillar: newPillar, source } = await classifyPillar(post.caption, post.thumbnail_url)
 
-      if (newPillar !== 'Negative') {
-        await supabase
-          .from('instagram_posts')
-          .update({ pillar: newPillar, classification_source: source })
-          .eq('post_id', post.post_id)
-      }
+      // Always persist the source so we have a durable record of which posts
+      // were vision-checked — even when a post legitimately stays Negative.
+      await supabase
+        .from('instagram_posts')
+        .update({ pillar: newPillar, classification_source: source })
+        .eq('post_id', post.post_id)
 
       results.push({
         post_id: post.post_id,

@@ -5,7 +5,6 @@ import PostsSection from '../components/PostsSection'
 import InstagramSection from '../components/InstagramSection'
 import TrendSection from '../components/TrendSection'
 import Footer from '../components/Footer'
-import UpdateButton from '../components/UpdateButton'
 import { logout } from '@/app/actions/auth'
 
 const MIN_DATE = '2026-05-18'
@@ -103,7 +102,6 @@ export default async function DashboardPage({
         ]}
         postCount={totalPosts}
         logoutAction={logout as () => Promise<void>}
-        updateButton={<UpdateButton latestDate={latestDate} />}
       />
       <main className="max-w-screen-xl mx-auto px-6 pb-16">
         <InstagramSection accounts={instagramAccounts} dateLabel={dateLabel} dateFrom={from} dateTo={to} />

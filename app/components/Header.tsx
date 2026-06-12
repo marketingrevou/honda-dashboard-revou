@@ -1,4 +1,3 @@
-import { ReactNode } from 'react'
 import AccountsChip from './AccountsChip'
 import DateRangePicker from './DateRangePicker'
 
@@ -11,10 +10,9 @@ interface HeaderProps {
   accounts: string[]
   postCount: number
   logoutAction?: () => Promise<void>
-  updateButton?: ReactNode
 }
 
-export default function Header({ dateFrom, dateTo, minDate, maxDate, accountCount, accounts, postCount, logoutAction, updateButton }: HeaderProps) {
+export default function Header({ dateFrom, dateTo, minDate, maxDate, accountCount, accounts, postCount, logoutAction }: HeaderProps) {
   return (
     <header className="bg-white" style={{ borderTop: '4px solid #E62533', borderBottom: '1px solid #E5E7EB' }}>
       <div className="max-w-screen-xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 flex-wrap lg:flex-nowrap">
@@ -42,7 +40,6 @@ export default function Header({ dateFrom, dateTo, minDate, maxDate, accountCoun
           <span className="meta-chip text-white" style={{ background: '#333333' }}>
             {postCount} Posts
           </span>
-          {updateButton}
           {logoutAction && (
             <form action={logoutAction}>
               <button

@@ -45,7 +45,7 @@ export async function getTopPosts(dateRange: DateRange): Promise<Post[]> {
     .from('instagram_posts')
     .select('post_id, account_username, thumbnail_url, caption, likes_count, comments_count, views_count, post_date, post_type, pillar, post_url')
     .gte('post_date', dateRange.from)
-  if (dateRange.to) postsQuery = postsQuery.lte('post_date', dateRange.to)
+  if (dateRange.to) postsQuery = postsQuery.lte('post_date', dateRange.to + 'T23:59:59')
   const { data: posts } = await postsQuery
 
   if (!posts?.length) return []
@@ -82,7 +82,7 @@ export async function getTrendData(dateRange: DateRange): Promise<TrendRawPost[]
     .from('instagram_posts')
     .select('post_date, likes_count, views_count, comments_count, pillar, account_username')
     .gte('post_date', dateRange.from)
-  if (dateRange.to) trendQuery = trendQuery.lte('post_date', dateRange.to)
+  if (dateRange.to) trendQuery = trendQuery.lte('post_date', dateRange.to + 'T23:59:59')
   const { data: posts } = await trendQuery.order('post_date', { ascending: true })
 
   if (!posts?.length) return []
@@ -129,7 +129,7 @@ export async function getInstagramAccounts(dateRange: DateRange): Promise<Instag
       'account_username, likes_count, comments_count, views_count, post_date, pillar, thumbnail_url',
     )
     .gte('post_date', dateRange.from)
-  if (dateRange.to) accountPostsQuery = accountPostsQuery.lte('post_date', dateRange.to)
+  if (dateRange.to) accountPostsQuery = accountPostsQuery.lte('post_date', dateRange.to + 'T23:59:59')
   const { data: posts, error: postErr } = await accountPostsQuery
 
   if (postErr) return []

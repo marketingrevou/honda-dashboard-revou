@@ -11,15 +11,15 @@ export function makeSupabase() {
 type Supabase = ReturnType<typeof makeSupabase>
 
 export const ACCOUNTS = [
-  'imorasentul', 'hondakebonjerukofficial', 'hondamitralentengagung', 'hondapasarminggu',
-  'honda.lppm', 'hondastarmotortasik_official', 'hondaautoserangofficial', 'hondasonic368',
+  'hondaimorasentulofficial', 'honda.kebonjeruk', 'hondalentengagung',
+  'hondalppm', 'hondastarmotortasik', 'hondaautoserangofficial', 'hondasonic368',
   'hondaeiyu', 'honda.perdanasukabumi', 'hondamuliacianjurofficial', 'hac.hondaabadicibiru',
   'ibrmcimahiofficials', 'hondakumalaofficial_cikampek', 'hondaautocilegonofficial',
   'ibrmsubangofficial', 'ibrmofficial',
   'hondapekalonganmotor_official', 'hondatuguofficial', 'hondatunasjaya_official',
   'hondasolobaruofficial', 'hondakudusjayaofficial', 'hondasemarangcenter_dealer',
   'hondategalraya_official', 'hondasalatigajaya.official', 'hondaanugerahsejahteraofficial',
-  'hondasumbercilacappurwokerto', 'hondapatijayaa', 'honda_sumber_official', 'hondabsb_official',
+  'hondasumbercilacap', 'hondapatijayaa', 'hondasumberpurwokerto', 'hondabsb_official',
   'hondaperkasaklaten_official', 'hondajepara.official', 'hondagajahmada_official',
   'hondanagamotorntb', 'hondadewata.official', 'hondaistanajbr', 'hondamitramojokerto.official',
   'hondasukun', 'hondakupangindah_', 'hondamitratuban_official', 'hondaistanabanyuwangi',
@@ -44,10 +44,61 @@ export const ACCOUNTS = [
   'hondaanugerahusedcar', 'hondakmgcertifiedusedcar', 'hondaunionauto',
   'hondasanggarlaut.usedcar', 'honda_aldea_used_car', 'hondanenggausedcar',
   'usedcarhondabintangsolo', 'ambarausedcar', 'amarthausedcar',
+  // Jabodetabek + additional dealers already tracked in the DB.
+  'dealerhondabintaro', 'honda.arta', 'honda.autobest', 'honda.cibubur',
+  'honda.megatamabekasi', 'honda_kencana_kranji', 'honda_tebet',
+  'hondaanugerah_official', 'hondaaristadepok.official', 'hondaaristajatinegara.id',
+  'hondaaristamanggadua.id', 'hondaautolandgroup', 'hondaayani.official',
+  'hondabintang_official', 'hondabintangcimone', 'hondabogor.id', 'hondacakrapangukir',
+  'hondacijantungofficial', 'hondadaim', 'hondafatmawatiofficial', 'hondaikmciledug',
+  'hondaikmdaanmogot', 'hondaimora', 'hondainternusacibinong',
+  'hondaistanacarindo_official', 'hondakumalaofficial', 'hondakusumaofficial',
+  'hondamajupalembang', 'hondamandalasenamlg', 'hondamandiribogorofficial',
+  'hondamegahcinere', 'hondamegatamakalimalang', 'hondamegatamakapuk',
+  'hondamitrajatiasihofficial', 'hondamulyaputra', 'hondanusantara.official',
+  'hondanusantarabekasi.official', 'hondapacifickediri', 'hondapermatahijauofficial',
+  'hondapermataofficial', 'hondaphi', 'hondapondokcabe125', 'hondapurikembangan',
+  'hondasunter', 'hondasuryaagung', 'hondatendean0119', 'hondatrenalamsutera',
 ]
 
 const BATCH_SIZE = 5
 const BASE_URL = 'https://instagram-scraper-20251.p.rapidapi.com'
+const PROFILE_PIC_BUCKET = 'profile-pics'
+
+/**
+ * Download an Instagram CDN profile picture and store it in Supabase Storage,
+ * returning a stable public URL that never expires. Instagram's signed CDN URLs
+ * carry an `oe=` expiry (~7 days), so persisting them directly means avatars go
+ * blank after a week. We mirror the image into our own bucket instead.
+ *
+ * Returns the original CDN URL as a fallback if the download/upload fails, so a
+ * transient storage hiccup never wipes an account's existing picture.
+ */
+async function storeProfilePic(
+  supabase: Supabase,
+  username: string,
+  cdnUrl: string | null,
+): Promise<string | null> {
+  if (!cdnUrl) return null
+  try {
+    const res = await fetch(cdnUrl)
+    if (!res.ok) return cdnUrl
+    const contentType = res.headers.get('content-type') || 'image/jpeg'
+    if (!contentType.startsWith('image/')) return cdnUrl
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (buf.length === 0) return cdnUrl
+
+    const path = `${username}.jpg`
+    const { error: upErr } = await supabase.storage
+      .from(PROFILE_PIC_BUCKET)
+      .upload(path, buf, { contentType, upsert: true, cacheControl: '31536000' })
+    if (upErr) return cdnUrl
+
+    return supabase.storage.from(PROFILE_PIC_BUCKET).getPublicUrl(path).data.publicUrl
+  } catch {
+    return cdnUrl
+  }
+}
 
 function rapidapiHeaders() {
   return {
@@ -91,11 +142,17 @@ async function processAccount(
   try {
     const profile = await fetchUserInfo(username)
 
+    const profilePicUrl = await storeProfilePic(
+      supabase,
+      username,
+      profile.profile_pic_url || null,
+    )
+
     await supabase.from('instagram_accounts').upsert(
       {
         username,
         full_name: profile.full_name || username,
-        profile_picture_url: profile.profile_pic_url || null,
+        profile_picture_url: profilePicUrl,
         followers_count: profile.follower_count || 0,
         following_count: profile.following_count || 0,
         biography: profile.biography || '',

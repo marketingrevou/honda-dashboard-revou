@@ -54,7 +54,7 @@ function PostsModal({ modal, onClose }: { modal: ModalState; onClose: () => void
       .select('post_id, post_date, caption, post_url, pillar')
       .eq('account_username', modal.username)
       .gte('post_date', modal.dateFrom)
-      .lte('post_date', modal.dateTo)
+      .lte('post_date', modal.dateTo + 'T23:59:59')
       .order('post_date', { ascending: false })
 
     if (modal.pillar) {

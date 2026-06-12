@@ -3,10 +3,6 @@
     {
       "path": "/api/cron/update",
       "schedule": "0 23 * * 0"
-    },
-    {
-      "path": "/api/cron/refresh-thumbnails",
-      "schedule": "0 2 * * 1,4"
     }
   ]
 }

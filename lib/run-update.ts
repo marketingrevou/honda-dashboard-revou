@@ -44,6 +44,21 @@ export const ACCOUNTS = [
   'hondaanugerahusedcar', 'hondakmgcertifiedusedcar', 'hondaunionauto',
   'hondasanggarlaut.usedcar', 'honda_aldea_used_car', 'hondanenggausedcar',
   'usedcarhondabintangsolo', 'ambarausedcar', 'amarthausedcar',
+  // Jabodetabek + additional dealers already tracked in the DB.
+  'dealerhondabintaro', 'honda.arta', 'honda.autobest', 'honda.cibubur',
+  'honda.megatamabekasi', 'honda_kencana_kranji', 'honda_tebet',
+  'hondaanugerah_official', 'hondaaristadepok.official', 'hondaaristajatinegara.id',
+  'hondaaristamanggadua.id', 'hondaautolandgroup', 'hondaayani.official',
+  'hondabintang_official', 'hondabintangcimone', 'hondabogor.id', 'hondacakrapangukir',
+  'hondacijantungofficial', 'hondadaim', 'hondafatmawatiofficial', 'hondaikmciledug',
+  'hondaikmdaanmogot', 'hondaimora', 'hondainternusacibinong',
+  'hondaistanacarindo_official', 'hondakumalaofficial', 'hondakusumaofficial',
+  'hondamajupalembang', 'hondamandalasenamlg', 'hondamandiribogorofficial',
+  'hondamegahcinere', 'hondamegatamakalimalang', 'hondamegatamakapuk',
+  'hondamitrajatiasihofficial', 'hondamulyaputra', 'hondanusantara.official',
+  'hondanusantarabekasi.official', 'hondapacifickediri', 'hondapermatahijauofficial',
+  'hondapermataofficial', 'hondaphi', 'hondapondokcabe125', 'hondapurikembangan',
+  'hondasunter', 'hondasuryaagung', 'hondatendean0119', 'hondatrenalamsutera',
 ]
 
 const BATCH_SIZE = 5

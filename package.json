@@ -12,6 +12,7 @@
     "@anthropic-ai/sdk": "^0.100.1",
     "@supabase/supabase-js": "^2.107.0",
     "apify-client": "^2.23.3",
+    "bcryptjs": "^3.0.2",
     "next": "16.2.7",
     "openai": "^6.42.0",
     "react": "19.2.4",
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

@@ -28,6 +28,19 @@ function formatPostDate(iso: string | null): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+/**
+ * Instagram CDN images can't be hotlinked from the browser — the CDN requires an
+ * Instagram `Referer` and rejects cross-origin `<img>` requests, so they render as
+ * broken/blank. Route them through our own /api/image-proxy, which refetches with
+ * the right headers and serves the bytes from our origin. URLs already on our
+ * origin (Supabase Storage, or already proxied) are returned untouched.
+ */
+function proxyImage(url: string | null | undefined): string {
+  if (!url) return ''
+  if (!/cdninstagram\.com|fbcdn\.net/.test(url)) return url
+  return `/api/image-proxy?url=${encodeURIComponent(url)}`
+}
+
 export async function getLatestPostDate(): Promise<string | null> {
   const { data } = await supabase
     .from('instagram_posts')
@@ -63,7 +76,7 @@ export async function getTopPosts(dateRange: DateRange): Promise<Post[]> {
     accountHandle: `@${p.account_username}`,
     profileImageSrc: accountMap.get(p.account_username)?.profile_picture_url ?? '',
     date: formatPostDate(p.post_date),
-    postImageSrc: p.thumbnail_url ?? '',
+    postImageSrc: proxyImage(p.thumbnail_url),
     likesCount: p.likes_count ?? 0,
     commentsCount: p.comments_count ?? 0,
     viewsCount: p.views_count ?? 0,
@@ -157,7 +170,7 @@ export async function getInstagramAccounts(dateRange: DateRange): Promise<Instag
 
     const recent_thumbnails = sorted
       .slice(0, 5)
-      .map((p) => p.thumbnail_url)
+      .map((p) => proxyImage(p.thumbnail_url))
       .filter(Boolean) as string[]
 
     const pillar_breakdown = Object.fromEntries(

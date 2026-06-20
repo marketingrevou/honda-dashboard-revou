@@ -25,7 +25,7 @@ function typeToFormat(type: string | null): PostFormat {
 
 function formatPostDate(iso: string | null): string {
   if (!iso) return ''
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
 }
 
 export async function getLatestPostDate(): Promise<string | null> {

@@ -1,5 +1,4 @@
 import { createClient } from '@supabase/supabase-js'
-import { ApifyClient } from 'apify-client'
 import { classifyPillar } from '@/lib/classify-pillar'
 
 export function makeSupabase() {
@@ -44,13 +43,6 @@ export const ACCOUNTS = [
 const BATCH_SIZE = 5
 const BASE_URL = 'https://instagram-scraper-20251.p.rapidapi.com'
 const PROFILE_PIC_BUCKET = 'profile-pics'
-
-// Apify actor used to refresh thumbnails. Returns freshly-signed CDN URLs (the
-// RapidAPI userposts feed serves stale, already-expired URLs). $0.001/post.
-const THUMBNAIL_ACTOR = 'instagram-scraper/fast-instagram-post-scraper'
-// How many recent posts per account to ask Apify for. The dashboard only needs
-// thumbnails for recent posts; keeping this lean keeps the run cheap.
-const THUMBNAILS_POSTS_PER_PROFILE = 20
 
 /**
  * Download an Instagram CDN profile picture and store it in Supabase Storage,
@@ -203,110 +195,6 @@ async function processAccount(
     return { username, postsAdded }
   } catch (err) {
     return { username, postsAdded: 0, error: String(err) }
-  }
-}
-
-export interface RefreshResult {
-  accountsProcessed: number
-  thumbnailsRefreshed: number
-  errors?: string[]
-}
-
-/** Pull the best thumbnail URL out of an Apify fast-instagram-post-scraper item. */
-function thumbnailFromApifyItem(item: Record<string, unknown>): string | null {
-  if (typeof item.image === 'string' && item.image) return item.image
-  const images = item.images as { url?: string }[] | undefined
-  if (Array.isArray(images) && images[0]?.url) return images[0].url
-  const carousel = item.carousel_media as { image?: string; images?: { url?: string }[] }[] | undefined
-  if (Array.isArray(carousel) && carousel[0]) {
-    if (typeof carousel[0].image === 'string' && carousel[0].image) return carousel[0].image
-    if (carousel[0].images?.[0]?.url) return carousel[0].images[0].url
-  }
-  return null
-}
-
-/**
- * Refresh expiring CDN thumbnail URLs for every account that has posts in the
- * DB. Instagram's signed thumbnail URLs expire after ~days, so this is meant to
- * run on a cron to keep them fresh.
- *
- * Uses Apify's fast-instagram-post-scraper, which returns freshly-signed CDN
- * URLs. (The RapidAPI userposts feed was serving stale, already-expired URLs,
- * so refreshed thumbnails still 403'd.) One Apify run covers all accounts; we
- * then update thumbnail_url for any post_id (id/pk) we already have. Posts that
- * have scrolled out of the recent window can't be refreshed this way.
- */
-export async function refreshThumbnails(
-  supabase: Supabase,
-): Promise<RefreshResult> {
-  // Distinct accounts that actually have posts in the DB.
-  const { data: rows, error } = await supabase
-    .from('instagram_posts')
-    .select('account_username')
-    .not('account_username', 'is', null)
-
-  if (error) {
-    return { accountsProcessed: 0, thumbnailsRefreshed: 0, errors: [error.message] }
-  }
-
-  const accounts = [...new Set((rows ?? []).map((r) => r.account_username as string))]
-  if (!accounts.length) {
-    return { accountsProcessed: 0, thumbnailsRefreshed: 0 }
-  }
-
-  const errors: string[] = []
-  let items: Record<string, unknown>[] = []
-  try {
-    const apify = new ApifyClient({ token: process.env.APIFY_TOKEN })
-    const run = await apify.actor(THUMBNAIL_ACTOR).call({
-      instagramUsernames: accounts,
-      postsPerProfile: THUMBNAILS_POSTS_PER_PROFILE,
-    })
-    const dataset = await apify.dataset(run.defaultDatasetId).listItems()
-    items = dataset.items as Record<string, unknown>[]
-  } catch (err) {
-    return {
-      accountsProcessed: accounts.length,
-      thumbnailsRefreshed: 0,
-      errors: [`Apify run failed: ${String(err)}`],
-    }
-  }
-
-  // Build post_id -> fresh thumbnail URL from the Apify dataset. Our DB post_id
-  // is the bare media id, which the actor returns as `pk`. Its `id` field is a
-  // composite "<pk>_<userId>", so prefer pk and fall back to id's prefix.
-  const freshById = new Map<string, string>()
-  for (const item of items) {
-    const pk = (item.pk as string | undefined) ?? String(item.id ?? '').split('_')[0]
-    if (!pk) continue
-    const url = thumbnailFromApifyItem(item)
-    if (url) freshById.set(String(pk), url)
-  }
-
-  let thumbnailsRefreshed = 0
-  const updates = [...freshById.entries()]
-  for (let i = 0; i < updates.length; i += BATCH_SIZE) {
-    const batch = updates.slice(i, i + BATCH_SIZE)
-    const results = await Promise.all(
-      batch.map(async ([post_id, thumbnail_url]) => {
-        const { error: upErr, count } = await supabase
-          .from('instagram_posts')
-          .update({ thumbnail_url }, { count: 'exact' })
-          .eq('post_id', post_id)
-        if (upErr) {
-          errors.push(`${post_id}: ${upErr.message}`)
-          return 0
-        }
-        return count ?? 0
-      }),
-    )
-    thumbnailsRefreshed += results.reduce((s, n) => s + n, 0)
-  }
-
-  return {
-    accountsProcessed: accounts.length,
-    thumbnailsRefreshed,
-    ...(errors.length > 0 && { errors }),
   }
 }
 

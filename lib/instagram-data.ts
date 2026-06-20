@@ -63,9 +63,6 @@ export async function getTopPosts(dateRange: DateRange): Promise<Post[]> {
     accountHandle: `@${p.account_username}`,
     profileImageSrc: accountMap.get(p.account_username)?.profile_picture_url ?? '',
     date: formatPostDate(p.post_date),
-    // Post preview now comes from the live Instagram embed (PostModal), not the
-    // expiring CDN thumbnail. Kept for the type but no longer rendered.
-    postImageSrc: '',
     likesCount: p.likes_count ?? 0,
     commentsCount: p.comments_count ?? 0,
     viewsCount: p.views_count ?? 0,
@@ -187,7 +184,6 @@ export async function getInstagramAccounts(dateRange: DateRange): Promise<Instag
       last_post_date,
       dominant_pillar,
       pillar_breakdown,
-      recent_thumbnails: [],
     }
   })
 }

@@ -6,7 +6,6 @@ export interface Post {
   accountHandle: string
   profileImageSrc: string
   date: string
-  postImageSrc: string
   likesCount: number
   commentsCount: number
   viewsCount: number
@@ -67,7 +66,6 @@ export interface InstagramAccount {
   last_post_date: string | null
   dominant_pillar: PillarLabel
   pillar_breakdown: Record<PillarLabel, number>
-  recent_thumbnails: string[]
 }
 
 export interface InstagramPost {

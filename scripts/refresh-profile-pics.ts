@@ -4,12 +4,14 @@
  *
  * Instagram profile-pic CDN URLs expire (the `oe=` param is a Unix expiry).
  * For each account whose profile_picture_url is missing or already expired,
- * re-fetch a fresh URL from RapidAPI /userinfo/ and update the DB.
+ * re-fetch a fresh URL from RapidAPI /userinfo/, mirror the image into Supabase
+ * Storage, and store the stable public URL — so it never expires again.
  */
 
-import { createClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
 const BASE_URL = 'https://instagram-scraper-20251.p.rapidapi.com'
+const PROFILE_PIC_BUCKET = 'profile-pics'
 
 function rapidapiHeaders() {
   return {
@@ -25,6 +27,37 @@ async function fetchUserInfo(username: string) {
   })
   const json = await res.json()
   return json.data
+}
+
+/**
+ * Download a CDN profile picture and store it in Supabase Storage, returning a
+ * stable public URL. Mirrors lib/run-update.ts:storeProfilePic. Falls back to
+ * the CDN URL only if the download/upload fails.
+ */
+async function storeProfilePic(
+  supabase: SupabaseClient,
+  username: string,
+  cdnUrl: string | null,
+): Promise<string | null> {
+  if (!cdnUrl) return null
+  try {
+    const res = await fetch(cdnUrl, { headers: { Referer: 'https://www.instagram.com/' } })
+    if (!res.ok) return cdnUrl
+    const contentType = res.headers.get('content-type') || 'image/jpeg'
+    if (!contentType.startsWith('image/')) return cdnUrl
+    const buf = Buffer.from(await res.arrayBuffer())
+    if (buf.length === 0) return cdnUrl
+
+    const path = `${username}.jpg`
+    const { error: upErr } = await supabase.storage
+      .from(PROFILE_PIC_BUCKET)
+      .upload(path, buf, { contentType, upsert: true, cacheControl: '31536000' })
+    if (upErr) return cdnUrl
+
+    return supabase.storage.from(PROFILE_PIC_BUCKET).getPublicUrl(path).data.publicUrl
+  } catch {
+    return cdnUrl
+  }
 }
 
 /** Returns the `oe=` expiry as a Date, or null if absent/unparseable. */
@@ -66,20 +99,23 @@ async function main() {
   for (const acc of stale) {
     try {
       const profile = await fetchUserInfo(acc.username)
-      const freshUrl = profile?.profile_pic_url || null
-      if (!freshUrl) {
+      const freshCdnUrl = profile?.profile_pic_url || null
+      if (!freshCdnUrl) {
         console.log(`[${acc.username}] No profile_pic_url returned from API`)
         continue
       }
+      // Mirror into Storage so the stored URL never expires.
+      const storedUrl = await storeProfilePic(supabase, acc.username, freshCdnUrl)
       const { error: upErr } = await supabase
         .from('instagram_accounts')
-        .update({ profile_picture_url: freshUrl })
+        .update({ profile_picture_url: storedUrl })
         .eq('username', acc.username)
       if (upErr) {
         console.error(`[${acc.username}] update error: ${upErr.message}`)
         continue
       }
-      console.log(`[${acc.username}] updated ✓`)
+      const inStorage = storedUrl?.includes('supabase') ? '✓ (stored)' : '✓ (cdn fallback)'
+      console.log(`[${acc.username}] updated ${inStorage}`)
       updated++
     } catch (err: any) {
       console.error(`[${acc.username}] ERROR: ${err.message}`)

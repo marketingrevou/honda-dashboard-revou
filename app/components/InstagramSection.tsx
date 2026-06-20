@@ -40,7 +40,7 @@ function formatNum(n: number): string {
 
 function formatDate(iso: string | null): string {
   if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })
+  return new Date(iso).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
 }
 
 function PostsModal({ modal, onClose }: { modal: ModalState; onClose: () => void }) {

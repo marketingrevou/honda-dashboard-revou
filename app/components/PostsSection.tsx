@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react'
 import type { Post, PillarLabel } from '@/lib/types'
 import { PILLAR_COLOR } from '@/lib/types'
 import PostCard from './PostCard'
+import PostModal from './PostModal'
 
 export type SortBy = 'likes' | 'comments' | 'views'
 
@@ -35,6 +36,7 @@ interface PostsSectionProps {
 export default function PostsSection({ posts, dateLabel }: PostsSectionProps) {
   const [activePillar, setActivePillar] = useState<PillarLabel | 'All'>('All')
   const [sortBy, setSortBy] = useState<SortBy>('likes')
+  const [openPost, setOpenPost] = useState<Post | null>(null)
 
   const totalAccounts = useMemo(() => new Set(posts.map((p) => p.accountHandle)).size, [posts])
 
@@ -141,10 +143,12 @@ export default function PostsSection({ posts, dateLabel }: PostsSectionProps) {
       ) : (
         <div className="posts-grid grid grid-cols-2 md:grid-cols-5 gap-4">
           {displayed.map((post, i) => (
-            <PostCard key={post.id} post={post} rank={i + 1} sortBy={sortBy} />
+            <PostCard key={post.id} post={post} rank={i + 1} sortBy={sortBy} onOpen={setOpenPost} />
           ))}
         </div>
       )}
+
+      {openPost && <PostModal post={openPost} onClose={() => setOpenPost(null)} />}
     </section>
   )
 }

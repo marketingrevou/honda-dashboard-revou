@@ -29,7 +29,6 @@ interface Props {
 
 export default function InstagramAccountCard({ account }: Props) {
   const [imgError, setImgError] = useState(false)
-  const [thumbErrors, setThumbErrors] = useState<Record<number, boolean>>({})
 
   const pillarsWithPosts = Object.entries(account.pillar_breakdown)
     .filter(([, count]) => count > 0)
@@ -84,33 +83,6 @@ export default function InstagramAccountCard({ account }: Props) {
           ↗
         </a>
       </div>
-
-      {/* Post thumbnails row */}
-      {account.recent_thumbnails.length > 0 && (
-        <div className="flex gap-0.5" style={{ height: 72 }}>
-          {account.recent_thumbnails.slice(0, 5).map((url, i) => (
-            <div key={i} className="flex-1 relative overflow-hidden bg-gray-100">
-              {!thumbErrors[i] ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={url}
-                  alt={`Post ${i + 1}`}
-                  className="w-full h-full object-cover"
-                  onError={() => setThumbErrors((prev) => ({ ...prev, [i]: true }))}
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center" style={{ background: '#F0F0F0' }}>
-                  <span style={{ fontSize: '8px', color: '#9CA3AF' }}>—</span>
-                </div>
-              )}
-            </div>
-          ))}
-          {/* Fill remaining slots if fewer than 5 */}
-          {Array.from({ length: Math.max(0, 5 - account.recent_thumbnails.length) }).map((_, i) => (
-            <div key={`empty-${i}`} className="flex-1" style={{ background: '#F7F7F7' }} />
-          ))}
-        </div>
-      )}
 
       {/* Stats grid */}
       <div className="grid grid-cols-4 px-3 py-2" style={{ borderBottom: '1px solid #F0F0F0', gap: '2px 0' }}>

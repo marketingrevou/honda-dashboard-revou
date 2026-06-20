@@ -2,34 +2,45 @@ import type { Post } from '@/lib/types'
 import { CATEGORY_BG } from '@/lib/types'
 import type { SortBy } from './PostsSection'
 import ProfileImage from './ProfileImage'
-import PostImage from './PostImage'
 
 interface PostCardProps {
   post: Post
   rank: number
   sortBy?: SortBy
+  onOpen: (post: Post) => void
 }
 
-export default function PostCard({ post, rank, sortBy = 'likes' }: PostCardProps) {
+export default function PostCard({ post, rank, sortBy = 'likes', onOpen }: PostCardProps) {
   const primaryValue =
     sortBy === 'comments' ? post.commentsCount : sortBy === 'views' ? post.viewsCount : post.likesCount
   const primaryLabel =
     sortBy === 'comments' ? 'komentar' : sortBy === 'views' ? 'views' : 'likes'
   return (
-    <div className="post-card bg-white overflow-hidden" style={{ border: '1px solid #E5E7EB' }}>
+    <div
+      className="post-card bg-white overflow-hidden flex flex-col"
+      style={{ border: '1px solid #E5E7EB', cursor: 'pointer' }}
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(post)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpen(post)
+        }
+      }}
+    >
       <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: '1px solid #F0F0F0' }}>
+        <span className="rank-badge flex-shrink-0">#{rank}</span>
         <ProfileImage src={post.profileImageSrc} username={post.accountHandle} />
-        <div>
-          <div className="font-mulish font-semibold" style={{ fontSize: '10px', color: '#111827' }}>
+        <div className="min-w-0">
+          <div className="font-mulish font-semibold truncate" style={{ fontSize: '10px', color: '#111827' }}>
             {post.accountHandle}
           </div>
           <div style={{ fontSize: '9px', color: '#9CA3AF' }}>{post.date}</div>
         </div>
       </div>
 
-      <PostImage src={post.postImageSrc} rank={rank} alt={`Post #${rank}`} />
-
-      <div className="px-3 pt-2 pb-4">
+      <div className="px-3 pt-2 pb-4 flex flex-col flex-1">
         <div className="flex items-baseline gap-3 mb-1.5">
           <span className="font-roboto font-bold" style={{ fontSize: '16px', color: '#E62533' }}>
             {primaryValue.toLocaleString()}
@@ -42,7 +53,7 @@ export default function PostCard({ post, rank, sortBy = 'likes' }: PostCardProps
         <p className="font-mulish caption-clamp mb-2 leading-relaxed" style={{ fontSize: '10px', color: '#555555' }}>
           {post.caption}
         </p>
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5 mt-auto">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="cat-tag text-white" style={{ background: CATEGORY_BG[post.category] }}>
               {post.category}
@@ -51,15 +62,12 @@ export default function PostCard({ post, rank, sortBy = 'likes' }: PostCardProps
               {post.format}
             </span>
           </div>
-          <a
-            href={post.instagramUrl}
-            target="_blank"
-            rel="noopener noreferrer"
+          <span
             className="font-mulish font-semibold self-start"
             style={{ fontSize: '9px', color: '#E62533', border: '1px solid #E62533', padding: '3px 9px', letterSpacing: '0.3px', whiteSpace: 'nowrap' }}
           >
-            Lihat Post ↗
-          </a>
+            Preview Post ↗
+          </span>
         </div>
       </div>
     </div>

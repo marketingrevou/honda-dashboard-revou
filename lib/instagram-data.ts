@@ -1,19 +1,10 @@
 import { cacheLife } from 'next/cache'
 import { supabase } from './supabase'
-import type { InstagramAccount, PillarLabel, Post, PostCategory, PostFormat, TrendRawPost } from './types'
+import type { InstagramAccount, PillarLabel, Post, PostFormat, TrendRawPost } from './types'
 
 export interface DateRange {
   from: string
   to?: string
-}
-
-function pillarToCategory(pillar: string | null): PostCategory {
-  switch (pillar) {
-    case 'Product Value & Information': return 'Product Info'
-    case 'Dealer Credibility': return 'Credibility'
-    case 'Promo Activation': return 'Promo'
-    default: return 'Product Info'
-  }
 }
 
 function typeToFormat(type: string | null): PostFormat {
@@ -67,7 +58,6 @@ export async function getTopPosts(dateRange: DateRange): Promise<Post[]> {
     commentsCount: p.comments_count ?? 0,
     viewsCount: p.views_count ?? 0,
     caption: p.caption ?? '',
-    category: pillarToCategory(p.pillar),
     format: typeToFormat(p.post_type),
     instagramUrl: p.post_url ?? '',
     pillar: (p.pillar as PillarLabel) ?? 'Negative',

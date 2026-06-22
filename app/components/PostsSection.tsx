@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import type { Post, PillarLabel } from '@/lib/types'
-import { PILLAR_COLOR } from '@/lib/types'
+import { PILLAR_COLOR, PILLAR_SHORT } from '@/lib/types'
 import PostCard from './PostCard'
 import PostModal from './PostModal'
 
@@ -14,13 +14,6 @@ const PILLARS: PillarLabel[] = [
   'Customer Story',
   'Promo Activation',
 ]
-
-const PILLAR_SHORT: Record<string, string> = {
-  'Product Value & Information': 'Product Value',
-  'Dealer Credibility': 'Credibility',
-  'Customer Story': 'Customer Story',
-  'Promo Activation': 'Promo',
-}
 
 const SORT_LABEL: Record<SortBy, string> = {
   likes: 'Likes',

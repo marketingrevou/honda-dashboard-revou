@@ -1,4 +1,3 @@
-export type PostCategory = 'Product Info' | 'Promo' | 'Credibility'
 export type PostFormat = 'Carousel' | 'Reels' | 'Static Post'
 
 export interface Post {
@@ -10,7 +9,6 @@ export interface Post {
   commentsCount: number
   viewsCount: number
   caption: string
-  category: PostCategory
   format: PostFormat
   instagramUrl: string
   pillar: PillarLabel
@@ -31,12 +29,6 @@ export interface Pillar {
   ideas: Idea[]
 }
 
-export const CATEGORY_BG: Record<PostCategory, string> = {
-  'Product Info': '#E62533',
-  'Promo': '#333333',
-  'Credibility': '#E62533',
-}
-
 export type PillarLabel =
   | 'Product Value & Information'
   | 'Dealer Credibility'
@@ -50,6 +42,15 @@ export const PILLAR_COLOR: Record<PillarLabel, string> = {
   'Customer Story': '#1D6FA4',
   'Promo Activation': '#D97706',
   'Negative': '#9CA3AF',
+}
+
+/** Compact labels for the 5 pillars, used in badges/chips. */
+export const PILLAR_SHORT: Record<PillarLabel, string> = {
+  'Product Value & Information': 'Product Value',
+  'Dealer Credibility': 'Credibility',
+  'Customer Story': 'Customer Story',
+  'Promo Activation': 'Promo',
+  'Negative': 'Negative',
 }
 
 export interface InstagramAccount {

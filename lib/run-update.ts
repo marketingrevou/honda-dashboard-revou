@@ -114,8 +114,6 @@ type AccountResult = { username: string; postsAdded: number; error?: string }
 
 async function processAccount(
   username: string,
-  dateFrom: Date,
-  dateTo: Date,
   supabase: Supabase,
 ): Promise<AccountResult> {
   try {
@@ -160,23 +158,25 @@ async function processAccount(
       { onConflict: 'post_id' },
     )
 
-    // Classify only in-range posts that don't yet have a pillar.
-    const inRange = (allPosts as Record<string, unknown>[]).filter((p) => {
-      if (!p.taken_at) return false
-      const d = new Date((p.taken_at as number) * 1000)
-      return d >= dateFrom && d <= dateTo
-    })
+    // Classify every fetched post that hasn't been classified yet. The `pillar`
+    // column defaults to 'Negative', so "has a pillar" is NOT a reliable signal
+    // — classification_source IS NULL means it was never actually classified.
+    // We check all 50 fetched posts (not just a date window) so posts that were
+    // upserted but missed the classifier get backfilled.
+    const fetchedIds = (allPosts as Record<string, unknown>[]).map((p) => String(p.id))
 
     let postsAdded = 0
-    if (inRange.length > 0) {
-      const { data: alreadyClassified } = await supabase
+    if (fetchedIds.length > 0) {
+      const { data: classifiedRows } = await supabase
         .from('instagram_posts')
         .select('post_id')
-        .in('post_id', inRange.map((p) => String(p.id)))
-        .not('pillar', 'is', null)
+        .in('post_id', fetchedIds)
+        .not('classification_source', 'is', null)
 
-      const classifiedIds = new Set(alreadyClassified?.map((r) => r.post_id) ?? [])
-      const toClassify = inRange.filter((p) => !classifiedIds.has(String(p.id)))
+      const classifiedIds = new Set(classifiedRows?.map((r) => r.post_id) ?? [])
+      const toClassify = (allPosts as Record<string, unknown>[]).filter(
+        (p) => !classifiedIds.has(String(p.id)),
+      )
 
       const results = await Promise.allSettled(
         toClassify.map(async (p) => {
@@ -236,7 +236,7 @@ export async function runUpdate(
   for (let i = 0; i < ACCOUNTS.length; i += BATCH_SIZE) {
     const batch = ACCOUNTS.slice(i, i + BATCH_SIZE)
     const batchResults = await Promise.all(
-      batch.map((username) => processAccount(username, dateFrom!, dateTo!, supabase)),
+      batch.map((username) => processAccount(username, supabase)),
     )
     results.push(...batchResults)
   }

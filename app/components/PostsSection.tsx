@@ -50,7 +50,7 @@ export default function PostsSection({ posts, dateLabel }: PostsSectionProps) {
       <div className="mb-4">
         <h2 className="section-heading">Top 10 Post</h2>
         <p className="font-mulish mt-1" style={{ fontSize: '11.5px', color: '#555555' }}>
-          {`Top 10 posts by ${SORT_LABEL[sortBy].toLowerCase()} from ${totalAccounts} dealer accounts  ·  Last week: ${dateLabel}`}
+          {`Top 10 posts by ${SORT_LABEL[sortBy].toLowerCase()} from ${totalAccounts} dealer accounts  ·  Last 2 weeks: ${dateLabel}`}
           {activePillar !== 'All' && ` ·  ${activePillar}`}
         </p>
         <hr className="section-rule mt-3" />

@@ -1,5 +1,5 @@
 import type { Post } from '@/lib/types'
-import { CATEGORY_BG } from '@/lib/types'
+import { PILLAR_COLOR, PILLAR_SHORT } from '@/lib/types'
 import type { SortBy } from './PostsSection'
 import ProfileImage from './ProfileImage'
 
@@ -55,8 +55,8 @@ export default function PostCard({ post, rank, sortBy = 'likes', onOpen }: PostC
         </p>
         <div className="flex flex-col gap-1.5 mt-auto">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="cat-tag text-white" style={{ background: CATEGORY_BG[post.category] }}>
-              {post.category}
+            <span className="cat-tag text-white" style={{ background: PILLAR_COLOR[post.pillar] }}>
+              {PILLAR_SHORT[post.pillar]}
             </span>
             <span className="fmt-tag" style={{ background: '#F0F0F0', color: '#555555' }}>
               {post.format}

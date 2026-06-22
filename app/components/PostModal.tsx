@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type { Post } from '@/lib/types'
 
 /** Extract the Instagram shortcode from a post URL like .../p/<code>/ or .../reel/<code>/. */
@@ -22,6 +22,10 @@ interface PostModalProps {
  */
 export default function PostModal({ post, onClose }: PostModalProps) {
   const shortcode = shortcodeFromUrl(post.instagramUrl)
+  // Instagram embeds vary in height (image vs caption length). Default to a tall
+  // value so the full post + caption + actions are visible even before (or if)
+  // the embed reports its real height via postMessage; the listener refines it.
+  const [embedHeight, setEmbedHeight] = useState(880)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -34,6 +38,26 @@ export default function PostModal({ post, onClose }: PostModalProps) {
       document.body.style.overflow = ''
     }
   }, [onClose])
+
+  // Instagram's embed posts a { type: 'MEASURE', details: { height } } message
+  // (the same mechanism its embed.js uses) once it has laid out. Resize to it.
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      let host = ''
+      try { host = new URL(e.origin).hostname } catch { return }
+      if (!/(^|\.)instagram\.com$/.test(host)) return
+      let data = e.data
+      if (typeof data === 'string') {
+        try { data = JSON.parse(data) } catch { return }
+      }
+      const h = data?.details?.height
+      if (data?.type === 'MEASURE' && typeof h === 'number' && h > 0) {
+        setEmbedHeight(Math.ceil(h))
+      }
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [])
 
   return (
     <div
@@ -66,13 +90,13 @@ export default function PostModal({ post, onClose }: PostModalProps) {
           </button>
         </div>
 
-        <div className="flex-1 overflow-auto" style={{ background: '#FAFAFA' }}>
+        <div className="overflow-y-auto" style={{ background: '#FAFAFA', minHeight: 0 }}>
           {shortcode ? (
             <iframe
               src={`https://www.instagram.com/p/${shortcode}/embed/`}
               title={`Instagram post ${shortcode}`}
               className="w-full"
-              style={{ border: 'none', height: '70vh', display: 'block' }}
+              style={{ border: 'none', height: embedHeight, display: 'block' }}
               loading="lazy"
               scrolling="no"
             />

@@ -15,9 +15,9 @@ function getYesterday(): string {
   return d.toISOString().slice(0, 10)
 }
 
-// Returns the most recent complete Mon–Sun week (the last Sunday on or before
-// `anchor`, plus the Monday 6 days prior).
-function getLastCompleteWeek(anchor: string): { from: string; to: string } {
+// Returns the two most recent complete Mon–Sun weeks: the last Sunday on or
+// before `anchor`, back to the Monday 13 days prior.
+function getLastTwoWeeks(anchor: string): { from: string; to: string } {
   const d = new Date(anchor + 'T00:00:00Z')
   const dow = d.getUTCDay() // 0 = Sun, 1 = Mon, ... 6 = Sat
   // Step back to the most recent Sunday (if anchor is Sunday, use it).
@@ -25,7 +25,7 @@ function getLastCompleteWeek(anchor: string): { from: string; to: string } {
   const sunday = new Date(d)
   sunday.setUTCDate(sunday.getUTCDate() - daysSinceSunday)
   const monday = new Date(sunday)
-  monday.setUTCDate(monday.getUTCDate() - 6)
+  monday.setUTCDate(monday.getUTCDate() - 13)
   return {
     from: monday.toISOString().slice(0, 10),
     to: sunday.toISOString().slice(0, 10),
@@ -65,12 +65,12 @@ export default async function DashboardPage({
   const dateLabel = formatDateLabel(from, to)
   const maxDate = latestDate ?? MIN_DATE
 
-  // Top 10 Post only considers the most recent complete week (Mon–Sun),
+  // Top 10 Post considers the two most recent complete weeks (Mon–Sun),
   // always anchored to today's actual date regardless of the date picker.
   const today = new Date().toISOString().slice(0, 10)
-  const lastWeek = getLastCompleteWeek(today)
-  const topRange: DateRange = { from: lastWeek.from, to: lastWeek.to }
-  const topDateLabel = formatDateLabel(lastWeek.from, lastWeek.to)
+  const lastTwoWeeks = getLastTwoWeeks(today)
+  const topRange: DateRange = { from: lastTwoWeeks.from, to: lastTwoWeeks.to }
+  const topDateLabel = formatDateLabel(lastTwoWeeks.from, lastTwoWeeks.to)
 
   const [instagramAccounts, topPosts, trendPosts] = await Promise.all([
     getInstagramAccounts(dateRange),

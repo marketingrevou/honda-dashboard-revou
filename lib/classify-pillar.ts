@@ -1,4 +1,12 @@
 import OpenAI from 'openai'
+import { PILLAR_DEFINITIONS, VALID_PILLARS } from './pillar-config'
+import type { PillarResult } from './pillar-config'
+
+// Pillar names, descriptions, and the prompt text built from them now live in
+// lib/pillar-config.ts — edit that file to tune classification. Re-exported here
+// so existing importers of classify-pillar keep working.
+export { PILLAR_DESCRIPTIONS, VALID_PILLARS } from './pillar-config'
+export type { PillarResult } from './pillar-config'
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
@@ -34,36 +42,6 @@ export const PILLAR_KEYWORDS: Record<string, string[]> = {
     'menang', 'pemenang', 'winner',
   ],
 }
-
-export const VALID_PILLARS = [
-  'Product Value & Information',
-  'Dealer Credibility',
-  'Customer Story',
-  'Promo Activation',
-  'Negative',
-] as const
-
-export type PillarResult = typeof VALID_PILLARS[number]
-
-// ─── Shared prompt blocks ─────────────────────────────────────────────────────
-
-const POSITIVE_PILLARS = `Pillar konten:
-- Product Value & Information: model mobil, spesifikasi, fitur, harga, DP/cicilan/kredit, test drive, tips servis/perawatan
-- Dealer Credibility: foto tim/staf, ucapan hari raya, info showroom, penghargaan, jam operasional, kegiatan CSR/komunitas
-- Customer Story: testimoni customer, serah terima/delivery unit, review pembeli, customer bahagia dengan mobilnya
-- Promo Activation: promo, diskon, cashback, giveaway, event, penawaran tukar tambah, bunga 0%`
-
-const NEGATIVE_CRITERIA = `- Negative: HANYA untuk konten yang benar-benar berbahaya atau tidak sesuai brand, sesuai salah satu dari 6 kategori ini:
-  1. Internal Complaint / Self-Downgrading — staf mengeluh soal pekerjaan/target ("capek jadi sales", "3 bulan belum closing", "sales dikejar target terus")
-  2. Clickbait / Viral tanpa Value — video trend/joget tanpa menampilkan mobil, meme random tidak terkait otomotif, caption tidak ada hubungannya dengan produk
-  3. Negative Customer Handling — menyindir customer, share komplain customer tanpa solusi, caption yang menyalahkan customer
-  4. Unprofessional Content — bahasa kasar atau terlalu slang, curhat masalah pekerjaan, visual lingkungan kerja yang tidak rapi secara negatif
-  5. Competitor Bashing — secara langsung menjatuhkan brand lain ("mobil brand X jelek", "jangan beli yang lain")
-  6. High Risk Content (Brand Safety) — SARA/hate speech, informasi hoaks, konten kekerasan atau tidak pantas
-  JANGAN gunakan Negative untuk konten yang generik, ambigu, atau sulit diklasifikasi — pilih pillar positif yang paling mendekati.`
-
-const PILLAR_DEFINITIONS = `${POSITIVE_PILLARS}
-${NEGATIVE_CRITERIA}`
 
 // ─── Prompts ──────────────────────────────────────────────────────────────────
 

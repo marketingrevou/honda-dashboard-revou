@@ -1,21 +1,34 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// PILLAR CONFIG — edit this file to tune how posts are classified.
+// PILLAR CONFIG — the pillar set and their descriptions.
 //
-// This is the single source of truth for the content pillars and what each one
-// means. The descriptions below are fed into the AI prompt, so editing the text
-// directly changes classification behaviour everywhere: every scrape, the
-// reclassify API, and all backfill scripts read from here.
+// THE PILLAR SET (VALID_PILLARS / PillarResult) lives here in code: it's the
+// compile-time contract tied to DB values and UI labels. Renaming or adding a
+// pillar is a code change.
 //
-// HOW TO EDIT:
-//   • To reword a pillar's meaning  → change its value in PILLAR_DESCRIPTIONS.
-//   • Keep the keys (pillar names)   → they're tied to VALID_PILLARS by type, so
-//     a typo or missing pillar fails the build instead of silently misclassifying.
-//   • Renaming a pillar is a bigger change (DB values + UI labels) — not just here.
+// THE DESCRIPTIONS now live in Supabase (table `pillar_config`), so they can be
+// edited via the Supabase Table Editor without a code change or redeploy. The
+// descriptions are fed into the AI prompt, so editing a row changes
+// classification behaviour everywhere: every scrape, the reclassify API, and all
+// backfill scripts read from here.
+//
+// HOW TO EDIT A DESCRIPTION:
+//   • Open the `pillar_config` table in the Supabase Table Editor.
+//   • Edit the `description` cell for the pillar you want to reword.
+//   • Keep the `pillar` value matching one of VALID_PILLARS below — a row whose
+//     pillar isn't in the set is ignored, and a missing row falls back to the
+//     hardcoded text in this file.
+//
+// FALLBACK: if the Supabase fetch fails (or a pillar row is missing), we fall
+// back to PILLAR_DESCRIPTIONS_FALLBACK below so classification never breaks from
+// a DB hiccup. Keep that constant roughly in sync with the table as a safety net.
 //
 // AFTER EDITING:
-//   New posts use the new descriptions automatically. To re-apply them to posts
-//   already in the database, run:  npx tsx scripts/reclassify-all.ts
+//   New posts use the new descriptions automatically (cached per process — a
+//   restart picks up changes). To re-apply them to posts already in the
+//   database, run:  npx tsx scripts/reclassify-all.ts
 // ─────────────────────────────────────────────────────────────────────────────
+
+import { supabase } from './supabase'
 
 export const VALID_PILLARS = [
   'Product Value & Information',
@@ -27,9 +40,10 @@ export const VALID_PILLARS = [
 
 export type PillarResult = typeof VALID_PILLARS[number]
 
+// Hardcoded fallback — used only if the Supabase fetch fails or a row is missing.
 // The 4 positive pillars are short one-line summaries. `Negative` keeps its
 // detailed multi-line criteria (the 6 categories).
-export const PILLAR_DESCRIPTIONS: Record<PillarResult, string> = {
+export const PILLAR_DESCRIPTIONS_FALLBACK: Record<PillarResult, string> = {
   'Product Value & Information':
     'model mobil, spesifikasi, fitur, harga, DP/cicilan/kredit, test drive, tips servis/perawatan',
   'Dealer Credibility':
@@ -48,16 +62,51 @@ export const PILLAR_DESCRIPTIONS: Record<PillarResult, string> = {
   JANGAN gunakan Negative untuk konten yang generik, ambigu, atau sulit diklasifikasi — pilih pillar positif yang paling mendekati.`,
 }
 
-// ─── Derived prompt block ────────────────────────────────────────────────────
-// Built from PILLAR_DESCRIPTIONS above — positive pillars as bullets, then the
-// Negative criteria block. Don't edit this; edit PILLAR_DESCRIPTIONS instead.
+// ─── Fetch descriptions from Supabase (memoised per process) ─────────────────
+// Cached for the life of the process: a batch run of thousands of posts hits
+// Supabase once. A cron/script restart picks up edits made in the Table Editor.
 
-const POSITIVE_PILLARS = `Pillar konten:
+let descriptionsCache: Record<PillarResult, string> | null = null
+
+async function getPillarDescriptions(): Promise<Record<PillarResult, string>> {
+  if (descriptionsCache) return descriptionsCache
+
+  try {
+    const { data, error } = await supabase
+      .from('pillar_config')
+      .select('pillar, description')
+    if (error) throw error
+
+    const byPillar = new Map(data?.map((r) => [r.pillar, r.description]) ?? [])
+    // Start from the fallback, override with any matching rows from the DB. A
+    // missing or empty row keeps the hardcoded text for that pillar.
+    const merged = { ...PILLAR_DESCRIPTIONS_FALLBACK }
+    for (const pillar of VALID_PILLARS) {
+      const desc = byPillar.get(pillar)
+      if (typeof desc === 'string' && desc.trim()) merged[pillar] = desc
+    }
+    descriptionsCache = merged
+    return merged
+  } catch {
+    // DB hiccup — fall back to the hardcoded text so classification never breaks.
+    return PILLAR_DESCRIPTIONS_FALLBACK
+  }
+}
+
+// ─── Derived prompt block ────────────────────────────────────────────────────
+// Built from the fetched descriptions — positive pillars as bullets, then the
+// Negative criteria block.
+
+export async function getPillarDefinitions(): Promise<string> {
+  const descriptions = await getPillarDescriptions()
+
+  const positivePillars = `Pillar konten:
 ${VALID_PILLARS.filter((p) => p !== 'Negative')
-  .map((p) => `- ${p}: ${PILLAR_DESCRIPTIONS[p]}`)
+  .map((p) => `- ${p}: ${descriptions[p]}`)
   .join('\n')}`
 
-const NEGATIVE_CRITERIA = `- Negative: ${PILLAR_DESCRIPTIONS['Negative']}`
+  const negativeCriteria = `- Negative: ${descriptions['Negative']}`
 
-export const PILLAR_DEFINITIONS = `${POSITIVE_PILLARS}
-${NEGATIVE_CRITERIA}`
+  return `${positivePillars}
+${negativeCriteria}`
+}

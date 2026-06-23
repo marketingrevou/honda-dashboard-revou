@@ -1,11 +1,12 @@
 import OpenAI from 'openai'
-import { PILLAR_DEFINITIONS, VALID_PILLARS } from './pillar-config'
+import { getPillarDefinitions, VALID_PILLARS } from './pillar-config'
 import type { PillarResult } from './pillar-config'
 
-// Pillar names, descriptions, and the prompt text built from them now live in
-// lib/pillar-config.ts — edit that file to tune classification. Re-exported here
-// so existing importers of classify-pillar keep working.
-export { PILLAR_DESCRIPTIONS, VALID_PILLARS } from './pillar-config'
+// The pillar set lives in lib/pillar-config.ts; the descriptions live in the
+// Supabase `pillar_config` table (edit via the Table Editor) and are fetched by
+// getPillarDefinitions(). Re-exported here so existing importers of
+// classify-pillar keep working.
+export { VALID_PILLARS } from './pillar-config'
 export type { PillarResult } from './pillar-config'
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -44,20 +45,24 @@ export const PILLAR_KEYWORDS: Record<string, string[]> = {
 }
 
 // ─── Prompts ──────────────────────────────────────────────────────────────────
+// Built per-call from getPillarDefinitions() (descriptions fetched from Supabase,
+// memoised per process).
 
-const CAPTION_AI_PROMPT = `Kamu mengklasifikasikan postingan Instagram dari dealer Honda di Indonesia.
+const captionAiPrompt = (definitions: string) =>
+  `Kamu mengklasifikasikan postingan Instagram dari dealer Honda di Indonesia.
 
-${PILLAR_DEFINITIONS}
+${definitions}
 
 Jawab dengan HANYA nama pillar, tidak ada yang lain.
 
 Caption:
 `
 
-const COMBINED_PROMPT = `Kamu mengklasifikasikan postingan Instagram dari dealer Honda di Indonesia.
+const combinedPrompt = (definitions: string) =>
+  `Kamu mengklasifikasikan postingan Instagram dari dealer Honda di Indonesia.
 Kamu memiliki teks caption DAN gambar postingan. Gunakan keduanya untuk klasifikasi terbaik.
 
-${PILLAR_DEFINITIONS}
+${definitions}
 
 Jawab dengan HANYA nama pillar, tidak ada yang lain.`
 
@@ -65,11 +70,12 @@ Jawab dengan HANYA nama pillar, tidak ada yang lain.`
 
 export async function classifyByCaptionAI(caption: string): Promise<PillarResult> {
   if (!caption?.trim()) return 'Negative'
+  const definitions = await getPillarDefinitions()
   const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     max_tokens: 50,
     temperature: 0,
-    messages: [{ role: 'user', content: CAPTION_AI_PROMPT + caption }],
+    messages: [{ role: 'user', content: captionAiPrompt(definitions) + caption }],
   })
   const text = response.choices[0]?.message?.content?.trim() ?? ''
   return (VALID_PILLARS as readonly string[]).includes(text) ? (text as PillarResult) : 'Negative'
@@ -91,6 +97,7 @@ export async function classifyWithCombinedAnalysis(
   imageUrl: string,
 ): Promise<PillarResult> {
   const { base64, mediaType } = await fetchImageAsBase64(imageUrl)
+  const definitions = await getPillarDefinitions()
   const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
     max_tokens: 50,
@@ -105,7 +112,7 @@ export async function classifyWithCombinedAnalysis(
           },
           {
             type: 'text',
-            text: `${COMBINED_PROMPT}\n\nCaption: ${caption || '(tidak ada caption)'}`,
+            text: `${combinedPrompt(definitions)}\n\nCaption: ${caption || '(tidak ada caption)'}`,
           },
         ],
       },

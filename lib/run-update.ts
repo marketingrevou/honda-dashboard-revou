@@ -45,6 +45,19 @@ const BASE_URL = 'https://instagram-scraper-20251.p.rapidapi.com'
 const PROFILE_PIC_BUCKET = 'profile-pics'
 
 /**
+ * Accounts processed per cron invocation. At ~2s/account, 40 accounts ≈ 80s —
+ * comfortably under the 300s function limit even if the API slows down. The
+ * cron advances a cursor each run so the whole list is covered across
+ * ceil(155/40) = 4 runs.
+ */
+export const CHUNK_SIZE = 40
+
+/** Number of cron runs needed to cover the full ACCOUNTS list. */
+export function chunkCount(): number {
+  return Math.ceil(ACCOUNTS.length / CHUNK_SIZE)
+}
+
+/**
  * Download an Instagram CDN profile picture and store it in Supabase Storage,
  * returning a stable public URL that never expires. Instagram's signed CDN URLs
  * carry an `oe=` expiry (~7 days), so persisting them directly means avatars go
@@ -117,26 +130,32 @@ async function processAccount(
   supabase: Supabase,
 ): Promise<AccountResult> {
   try {
+    // Profile and posts are fetched independently. The profile endpoint
+    // intermittently returns an empty payload (rate-limit / transient error),
+    // which used to throw on `profile.profile_pic_url` and abort the account
+    // BEFORE its posts were fetched — silently stranding that account's posts.
+    // We now treat a missing profile as non-fatal and still scrape the posts.
     const profile = await fetchUserInfo(username)
-
-    const profilePicUrl = await storeProfilePic(
-      supabase,
-      username,
-      profile.profile_pic_url || null,
-    )
-
-    await supabase.from('instagram_accounts').upsert(
-      {
+    if (profile) {
+      const profilePicUrl = await storeProfilePic(
+        supabase,
         username,
-        full_name: profile.full_name || username,
-        profile_picture_url: profilePicUrl,
-        followers_count: profile.follower_count || 0,
-        following_count: profile.following_count || 0,
-        biography: profile.biography || '',
-        scraped_at: new Date().toISOString(),
-      },
-      { onConflict: 'username' },
-    )
+        profile.profile_pic_url || null,
+      )
+
+      await supabase.from('instagram_accounts').upsert(
+        {
+          username,
+          full_name: profile.full_name || username,
+          profile_picture_url: profilePicUrl,
+          followers_count: profile.follower_count || 0,
+          following_count: profile.following_count || 0,
+          biography: profile.biography || '',
+          scraped_at: new Date().toISOString(),
+        },
+        { onConflict: 'username' },
+      )
+    }
 
     const allPosts = await fetchUserPosts(username, 50)
 
@@ -206,11 +225,26 @@ export interface UpdateResult {
   errors?: string[]
 }
 
+/**
+ * Process accounts in `[offset, offset + limit)` of the ACCOUNTS list.
+ *
+ * Scraping all 155 accounts in one invocation took ~315s — over the 300s
+ * function limit — so every weekly run was killed ~position 18, permanently
+ * stranding every dealer after it (R1/R2/Surabaya/most of Semarang). Splitting
+ * the list across several short invocations keeps each run well under the
+ * limit; see CHUNK_SIZE / chunkCount() and the cursor logic in the cron route.
+ *
+ * `offset`/`limit` default to the whole list so manual/script callers and tests
+ * keep the old "scrape everything" behaviour.
+ */
 export async function runUpdate(
   supabase: Supabase,
-  dateFrom?: Date,
-  dateTo?: Date,
+  options: { offset?: number; limit?: number; dateFrom?: Date; dateTo?: Date } = {},
 ): Promise<UpdateResult> {
+  let { dateFrom, dateTo } = options
+  const offset = options.offset ?? 0
+  const limit = options.limit ?? ACCOUNTS.length
+
   // Auto-calculate date range if not provided
   if (!dateFrom) {
     const { data } = await supabase
@@ -232,9 +266,11 @@ export async function runUpdate(
     dateTo = yesterday
   }
 
+  const slice = ACCOUNTS.slice(offset, offset + limit)
+
   const results: AccountResult[] = []
-  for (let i = 0; i < ACCOUNTS.length; i += BATCH_SIZE) {
-    const batch = ACCOUNTS.slice(i, i + BATCH_SIZE)
+  for (let i = 0; i < slice.length; i += BATCH_SIZE) {
+    const batch = slice.slice(i, i + BATCH_SIZE)
     const batchResults = await Promise.all(
       batch.map((username) => processAccount(username, supabase)),
     )

@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { classifyPillar } from '@/lib/classify-pillar'
+import { makeApify, runActor, getPostType, DISCOVERY_ACTOR, type ApifyItem } from '@/lib/apify'
 
 export function makeSupabase() {
   return createClient(
@@ -40,15 +41,18 @@ export const ACCOUNTS = [
   'hondaroyalkenjeran', 'hondasurabayacenter.imsi', 'hondaidk1medan', 'hondaaristabengkulu.official', 'hondatriobanjarbaru.id',
 ]
 
-const BATCH_SIZE = 5
-const BASE_URL = 'https://instagram-scraper-20251.p.rapidapi.com'
 const PROFILE_PIC_BUCKET = 'profile-pics'
 
+// Recent posts to request per account from the discovery actor. New posts since
+// the last run are always near the top, so 12 (one IG page) is plenty.
+const POSTS_PER_ACCOUNT = 12
+
 /**
- * Accounts processed per cron invocation. At ~2s/account, 40 accounts ≈ 80s —
- * comfortably under the 300s function limit even if the API slows down. The
- * cron advances a cursor each run so the whole list is covered across
- * ceil(155/40) = 4 runs.
+ * Accounts processed per cron invocation. The discovery actor
+ * (sones/instagram-posts-scraper-lowcost) takes a whole batch of usernames in a
+ * single run, so 40 accounts is one actor call returning ~480 posts, well under
+ * the 300s function limit. The cron advances a cursor each run so the whole list
+ * is covered across ceil(155/40) = 4 runs.
  */
 export const CHUNK_SIZE = 40
 
@@ -92,82 +96,100 @@ async function storeProfilePic(
   }
 }
 
-function rapidapiHeaders() {
-  return {
-    'Content-Type': 'application/json',
-    'x-rapidapi-host': 'instagram-scraper-20251.p.rapidapi.com',
-    'x-rapidapi-key': process.env.RAPIDAPI_KEY!,
-  }
-}
-
-function getPostType(mediaType: number, productType: string): string {
-  if (mediaType === 8) return 'carousel'
-  if (mediaType === 2) return productType === 'clips' ? 'reel' : 'video'
-  return 'image'
-}
-
-async function fetchUserInfo(username: string) {
-  const res = await fetch(`${BASE_URL}/userinfo/?username_or_id=${username}`, {
-    headers: rapidapiHeaders(),
-  })
-  const json = await res.json()
-  return json.data
-}
-
-async function fetchUserPosts(username: string, count = 50) {
-  const res = await fetch(
-    `${BASE_URL}/userposts/?username_or_id=${username}&count=${count}`,
-    { headers: rapidapiHeaders() },
-  )
-  const json = await res.json()
-  return json.data?.items ?? []
-}
-
 type AccountResult = { username: string; postsAdded: number; error?: string }
 
-async function processAccount(
-  username: string,
+/** Pull the caption text out of sones' nested caption object. */
+function captionText(p: ApifyItem): string {
+  const cap = p.caption as { text?: string } | string | null | undefined
+  if (typeof cap === 'string') return cap
+  return cap?.text ?? ''
+}
+
+/**
+ * Scrape recent posts for a batch of usernames via the discovery actor (one
+ * actor run for the whole batch), then upsert + classify the results.
+ *
+ * Returns one AccountResult per username so the cron's accountsProcessed /
+ * errors reporting stays accurate. An account that the actor returns no posts
+ * for is reported with an error so it surfaces rather than silently vanishing.
+ */
+async function processBatch(
+  usernames: string[],
   supabase: Supabase,
-): Promise<AccountResult> {
+): Promise<AccountResult[]> {
+  const client = makeApify()
+
+  let items: ApifyItem[]
   try {
-    // Profile and posts are fetched independently. The profile endpoint
-    // intermittently returns an empty payload (rate-limit / transient error),
-    // which used to throw on `profile.profile_pic_url` and abort the account
-    // BEFORE its posts were fetched — silently stranding that account's posts.
-    // We now treat a missing profile as non-fatal and still scrape the posts.
-    const profile = await fetchUserInfo(username)
-    if (profile) {
+    items = await runActor(client, DISCOVERY_ACTOR, {
+      usernames,
+      resultsLimit: POSTS_PER_ACCOUNT,
+    })
+  } catch (err) {
+    return usernames.map((u) => ({ username: u, postsAdded: 0, error: String(err) }))
+  }
+
+  // Group fetched posts by the account they belong to. sones tags each post with
+  // the queried handle in `scraped_username` (fall back to the embedded user).
+  const byAccount = new Map<string, ApifyItem[]>()
+  for (const p of items) {
+    const user = p.user as { username?: string } | undefined
+    const owner = (p.scraped_username as string) || user?.username || ''
+    if (!owner) continue
+    const list = byAccount.get(owner) ?? []
+    list.push(p)
+    byAccount.set(owner, list)
+  }
+
+  // Refresh the profile row from the owner data embedded in any of its posts.
+  await Promise.all(
+    usernames.map(async (username) => {
+      const posts = byAccount.get(username) ?? []
+      const user = posts[0]?.user as
+        | { full_name?: string; profile_pic_url?: string }
+        | undefined
+      if (!user) return
       const profilePicUrl = await storeProfilePic(
         supabase,
         username,
-        profile.profile_pic_url || null,
+        user.profile_pic_url || null,
       )
-
       await supabase.from('instagram_accounts').upsert(
         {
           username,
-          full_name: profile.full_name || username,
+          full_name: user.full_name || username,
           profile_picture_url: profilePicUrl,
-          followers_count: profile.follower_count || 0,
-          following_count: profile.following_count || 0,
-          biography: profile.biography || '',
           scraped_at: new Date().toISOString(),
         },
         { onConflict: 'username' },
       )
-    }
+    }),
+  )
 
-    const allPosts = await fetchUserPosts(username, 50)
+  return Promise.all(
+    usernames.map((username) => upsertAccountPosts(username, byAccount.get(username) ?? [], supabase)),
+  )
+}
 
-    // Upsert ALL 50 fetched posts to refresh thumbnail_url + metrics.
+/** Upsert + classify the fetched posts for a single account. */
+async function upsertAccountPosts(
+  username: string,
+  posts: ApifyItem[],
+  supabase: Supabase,
+): Promise<AccountResult> {
+  if (posts.length === 0) {
+    return { username, postsAdded: 0, error: 'no posts returned' }
+  }
+  try {
+    // Upsert all fetched posts to refresh thumbnail_url + metrics.
     // Columns not provided (pillar, classification_source) are preserved for existing rows.
     await supabase.from('instagram_posts').upsert(
-      (allPosts as Record<string, unknown>[]).map((p) => ({
-        post_id: String(p.id),
+      posts.map((p) => ({
+        post_id: String(p.pk ?? p.id),
         account_username: username,
-        post_url: `https://www.instagram.com/p/${p.code}/`,
-        thumbnail_url: (p.thumbnail_url as string) || null,
-        caption: (p.caption as Record<string, string>)?.text || '',
+        post_url: (p.post_url as string) || `https://www.instagram.com/p/${p.code}/`,
+        thumbnail_url: (p.image_url as string) || null,
+        caption: captionText(p),
         likes_count: (p.like_count as number) || 0,
         comments_count: (p.comment_count as number) || 0,
         views_count: (p.play_count as number) || (p.view_count as number) || 0,
@@ -180,37 +202,29 @@ async function processAccount(
     // Classify every fetched post that hasn't been classified yet. The `pillar`
     // column defaults to 'Negative', so "has a pillar" is NOT a reliable signal
     // — classification_source IS NULL means it was never actually classified.
-    // We check all 50 fetched posts (not just a date window) so posts that were
-    // upserted but missed the classifier get backfilled.
-    const fetchedIds = (allPosts as Record<string, unknown>[]).map((p) => String(p.id))
+    const fetchedIds = posts.map((p) => String(p.pk ?? p.id))
+    const { data: classifiedRows } = await supabase
+      .from('instagram_posts')
+      .select('post_id')
+      .in('post_id', fetchedIds)
+      .not('classification_source', 'is', null)
 
-    let postsAdded = 0
-    if (fetchedIds.length > 0) {
-      const { data: classifiedRows } = await supabase
-        .from('instagram_posts')
-        .select('post_id')
-        .in('post_id', fetchedIds)
-        .not('classification_source', 'is', null)
+    const classifiedIds = new Set(classifiedRows?.map((r) => r.post_id) ?? [])
+    const toClassify = posts.filter((p) => !classifiedIds.has(String(p.pk ?? p.id)))
 
-      const classifiedIds = new Set(classifiedRows?.map((r) => r.post_id) ?? [])
-      const toClassify = (allPosts as Record<string, unknown>[]).filter(
-        (p) => !classifiedIds.has(String(p.id)),
-      )
-
-      const results = await Promise.allSettled(
-        toClassify.map(async (p) => {
-          const caption: string = (p.caption as Record<string, string>)?.text || ''
-          const thumbnailUrl: string | null = (p.thumbnail_url as string) || null
-          const { pillar, source } = await classifyPillar(caption, thumbnailUrl)
-          await supabase
-            .from('instagram_posts')
-            .update({ pillar, classification_source: source })
-            .eq('post_id', String(p.id))
-        }),
-      )
-      postsAdded = results.filter((r) => r.status === 'fulfilled').length
-    }
-
+    const results = await Promise.allSettled(
+      toClassify.map(async (p) => {
+        const { pillar, source } = await classifyPillar(
+          captionText(p),
+          (p.image_url as string) || null,
+        )
+        await supabase
+          .from('instagram_posts')
+          .update({ pillar, classification_source: source })
+          .eq('post_id', String(p.pk ?? p.id))
+      }),
+    )
+    const postsAdded = results.filter((r) => r.status === 'fulfilled').length
     return { username, postsAdded }
   } catch (err) {
     return { username, postsAdded: 0, error: String(err) }
@@ -268,14 +282,9 @@ export async function runUpdate(
 
   const slice = ACCOUNTS.slice(offset, offset + limit)
 
-  const results: AccountResult[] = []
-  for (let i = 0; i < slice.length; i += BATCH_SIZE) {
-    const batch = slice.slice(i, i + BATCH_SIZE)
-    const batchResults = await Promise.all(
-      batch.map((username) => processAccount(username, supabase)),
-    )
-    results.push(...batchResults)
-  }
+  // The discovery actor handles a whole batch of usernames in one run, so the
+  // slice goes through in a single actor call.
+  const results = await processBatch(slice, supabase)
 
   const accountsProcessed = results.filter((r) => !r.error).length
   const postsAdded = results.reduce((s, r) => s + r.postsAdded, 0)

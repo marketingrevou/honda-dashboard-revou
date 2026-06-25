@@ -36,7 +36,18 @@ export async function GET(req: NextRequest) {
     offset = ((data?.next_offset ?? 0) % total + total) % total
   }
 
-  const result = await refreshMetrics(supabase, { offset, limit: CHUNK_SIZE })
+  // A failure here is almost always the upstream scraper (Apify) — quota
+  // exhausted or a transient actor error. Surface it as 502 and DON'T advance
+  // the cursor, so the next run retries this same slice instead of skipping it.
+  let result
+  try {
+    result = await refreshMetrics(supabase, { offset, limit: CHUNK_SIZE })
+  } catch (err) {
+    return NextResponse.json(
+      { success: false, offset, total, error: String(err) },
+      { status: 502 },
+    )
+  }
 
   // Advance the cursor (wrapping) only for cursor-driven runs, so a manual
   // ?offset= refresh doesn't skip a slice in the normal rotation. `done` is true

@@ -47,6 +47,12 @@ const PROFILE_PIC_BUCKET = 'profile-pics'
 // the last run are always near the top, so 12 (one IG page) is plenty.
 const POSTS_PER_ACCOUNT = 12
 
+// Hard floor for post dates. The discovery actor returns each account's most
+// recent N posts regardless of age, so low-volume dealers drag in posts from
+// years ago. The dashboard only covers the campaign window starting 2026-05-18,
+// so anything older is dropped before it ever reaches the DB.
+const POST_DATE_CUTOFF = new Date('2026-05-18T00:00:00Z')
+
 /**
  * Accounts processed per cron invocation. The discovery actor
  * (sones/instagram-posts-scraper-lowcost) takes a whole batch of usernames in a
@@ -171,14 +177,24 @@ async function processBatch(
   )
 }
 
+/** Unix `taken_at` (seconds) → Date. */
+function postDate(p: ApifyItem): Date {
+  return new Date((p.taken_at as number) * 1000)
+}
+
 /** Upsert + classify the fetched posts for a single account. */
 async function upsertAccountPosts(
   username: string,
-  posts: ApifyItem[],
+  allPosts: ApifyItem[],
   supabase: Supabase,
 ): Promise<AccountResult> {
-  if (posts.length === 0) {
+  if (allPosts.length === 0) {
     return { username, postsAdded: 0, error: 'no posts returned' }
+  }
+  // Drop anything before the campaign window so old posts never enter the DB.
+  const posts = allPosts.filter((p) => postDate(p) >= POST_DATE_CUTOFF)
+  if (posts.length === 0) {
+    return { username, postsAdded: 0 }
   }
   try {
     // Upsert all fetched posts to refresh thumbnail_url + metrics.
@@ -193,7 +209,7 @@ async function upsertAccountPosts(
         likes_count: (p.like_count as number) || 0,
         comments_count: (p.comment_count as number) || 0,
         views_count: (p.play_count as number) || (p.view_count as number) || 0,
-        post_date: new Date((p.taken_at as number) * 1000).toISOString(),
+        post_date: postDate(p).toISOString(),
         post_type: getPostType(p.media_type as number, p.product_type as string),
       })),
       { onConflict: 'post_id' },

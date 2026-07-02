@@ -1,6 +1,17 @@
 import { createClient } from '@supabase/supabase-js'
 import { classifyPillar } from '@/lib/classify-pillar'
-import { makeApify, runActor, getPostType, DISCOVERY_ACTOR, type ApifyItem } from '@/lib/apify'
+import {
+  makeApify,
+  runActor,
+  startActor,
+  getRunStatus,
+  fetchRunItems,
+  getPostType,
+  DISCOVERY_ACTOR,
+  TERMINAL_STATUSES,
+  type ApifyItem,
+  type ApifyRunStatus,
+} from '@/lib/apify'
 
 export function makeSupabase() {
   return createClient(
@@ -122,6 +133,7 @@ function captionText(p: ApifyItem): string {
 async function processBatch(
   usernames: string[],
   supabase: Supabase,
+  options: { classify?: boolean } = {},
 ): Promise<AccountResult[]> {
   const client = makeApify()
 
@@ -134,6 +146,23 @@ async function processBatch(
   } catch (err) {
     return usernames.map((u) => ({ username: u, postsAdded: 0, error: String(err) }))
   }
+
+  return ingestScrapeItems(items, usernames, supabase, options)
+}
+
+/**
+ * Everything the scrape does AFTER the actor call: group posts by account,
+ * refresh profile rows, and upsert (optionally classify) posts. Shared by the
+ * blocking cron path (processBatch) and the async admin path (ingestScrape), so
+ * the two never drift.
+ */
+async function ingestScrapeItems(
+  items: ApifyItem[],
+  usernames: string[],
+  supabase: Supabase,
+  options: { classify?: boolean } = {},
+): Promise<AccountResult[]> {
+  const classify = options.classify ?? true
 
   // Group fetched posts by the account they belong to. sones tags each post with
   // the queried handle in `scraped_username` (fall back to the embedded user).
@@ -173,7 +202,9 @@ async function processBatch(
   )
 
   return Promise.all(
-    usernames.map((username) => upsertAccountPosts(username, byAccount.get(username) ?? [], supabase)),
+    usernames.map((username) =>
+      upsertAccountPosts(username, byAccount.get(username) ?? [], supabase, { classify }),
+    ),
   )
 }
 
@@ -182,12 +213,23 @@ function postDate(p: ApifyItem): Date {
   return new Date((p.taken_at as number) * 1000)
 }
 
-/** Upsert + classify the fetched posts for a single account. */
+/**
+ * Upsert the fetched posts for a single account, optionally classifying any
+ * that haven't been classified yet.
+ *
+ * `classify: false` (used by the admin Update's Phase 1) does the upsert only —
+ * scrape and classification are run as separate all-accounts passes there, so
+ * classification is deferred to the standalone `classifyUnclassified` step.
+ * `classify: true` (the default, used by the interleaved cron) upserts and then
+ * classifies the newly-fetched posts in the same pass.
+ */
 async function upsertAccountPosts(
   username: string,
   allPosts: ApifyItem[],
   supabase: Supabase,
+  options: { classify?: boolean } = {},
 ): Promise<AccountResult> {
+  const classify = options.classify ?? true
   if (allPosts.length === 0) {
     return { username, postsAdded: 0, error: 'no posts returned' }
   }
@@ -214,6 +256,11 @@ async function upsertAccountPosts(
       })),
       { onConflict: 'post_id' },
     )
+
+    // Phase-1 (scrape-only) callers stop here; classification is a separate pass.
+    if (!classify) {
+      return { username, postsAdded: posts.length }
+    }
 
     // Classify every fetched post that hasn't been classified yet. The `pillar`
     // column defaults to 'Negative', so "has a pillar" is NOT a reliable signal
@@ -269,11 +316,12 @@ export interface UpdateResult {
  */
 export async function runUpdate(
   supabase: Supabase,
-  options: { offset?: number; limit?: number; dateFrom?: Date; dateTo?: Date } = {},
+  options: { offset?: number; limit?: number; dateFrom?: Date; dateTo?: Date; classify?: boolean } = {},
 ): Promise<UpdateResult> {
   let { dateFrom, dateTo } = options
   const offset = options.offset ?? 0
   const limit = options.limit ?? ACCOUNTS.length
+  const classify = options.classify ?? true
 
   // Auto-calculate date range if not provided
   if (!dateFrom) {
@@ -300,7 +348,7 @@ export async function runUpdate(
 
   // The discovery actor handles a whole batch of usernames in one run, so the
   // slice goes through in a single actor call.
-  const results = await processBatch(slice, supabase)
+  const results = await processBatch(slice, supabase, { classify })
 
   const accountsProcessed = results.filter((r) => !r.error).length
   const postsAdded = results.reduce((s, r) => s + r.postsAdded, 0)
@@ -311,6 +359,155 @@ export async function runUpdate(
     dateTo: dateTo.toISOString().slice(0, 10),
     accountsProcessed,
     postsAdded,
+    ...(errors.length > 0 && { errors }),
+  }
+}
+
+// ─── Async scrape (Phase 1, for time-capped callers) ─────────────────────────
+// Splits the blocking runUpdate scrape into start + ingest so no single request
+// waits for the whole Apify run — required on the 60s Hobby plan. The caller
+// (admin browser) starts a chunk, polls the run via getRunStatus, then calls
+// ingestScrape once it succeeds. The cron keeps using the blocking runUpdate.
+
+/** The usernames covered by a given scrape chunk (chunk index → slice). */
+export function chunkUsernames(chunk: number): string[] {
+  const offset = chunk * CHUNK_SIZE
+  return ACCOUNTS.slice(offset, offset + CHUNK_SIZE)
+}
+
+/** Start the discovery actor for one chunk without waiting. Returns run ids +
+ *  the usernames so ingest can attribute results even for accounts that came
+ *  back empty. */
+export async function startScrape(chunk: number): Promise<{
+  runId: string
+  datasetId: string
+  usernames: string[]
+}> {
+  const usernames = chunkUsernames(chunk)
+  const client = makeApify()
+  const { runId, datasetId } = await startActor(client, DISCOVERY_ACTOR, {
+    usernames,
+    resultsLimit: POSTS_PER_ACCOUNT,
+  })
+  return { runId, datasetId, usernames }
+}
+
+/** Poll a run's status (thin wrapper so routes don't import the Apify client). */
+export async function scrapeRunStatus(runId: string): Promise<ApifyRunStatus> {
+  return getRunStatus(makeApify(), runId)
+}
+
+export function isTerminalStatus(status: string): boolean {
+  return TERMINAL_STATUSES.has(status)
+}
+
+/**
+ * Ingest a finished scrape run: pull the dataset and run the same
+ * group/profile/upsert logic as the cron. Always scrape-only (classify:false) —
+ * the admin flow classifies in a separate Phase 2 pass.
+ */
+export async function ingestScrape(
+  supabase: Supabase,
+  datasetId: string,
+  usernames: string[],
+): Promise<{ accountsProcessed: number; postsAdded: number; errors?: string[] }> {
+  const items = await fetchRunItems(makeApify(), datasetId)
+  const results = await ingestScrapeItems(items, usernames, supabase, { classify: false })
+
+  const accountsProcessed = results.filter((r) => !r.error).length
+  const postsAdded = results.reduce((s, r) => s + r.postsAdded, 0)
+  const errors = results.filter((r) => r.error).map((r) => `${r.username}: ${r.error}`)
+  return { accountsProcessed, postsAdded, ...(errors.length > 0 && { errors }) }
+}
+
+// ─── Phase 2: classify unclassified posts ────────────────────────────────────
+// Used by the admin Update flow, which scrapes all accounts first (Phase 1,
+// classify: false) and then classifies in a separate all-accounts pass. A post
+// is "unclassified" when classification_source IS NULL — the `pillar` column
+// defaults to 'Negative' so its presence is not a reliable signal (see the
+// upsertAccountPosts comment above). Only posts inside the campaign window are
+// considered, matching POST_DATE_CUTOFF used on scrape.
+
+/** How many posts in the campaign window still need classifying. */
+export async function countUnclassified(supabase: Supabase): Promise<number> {
+  const { count } = await supabase
+    .from('instagram_posts')
+    .select('post_id', { count: 'exact', head: true })
+    .is('classification_source', null)
+    .gte('post_date', POST_DATE_CUTOFF.toISOString())
+  return count ?? 0
+}
+
+export interface ClassifyResult {
+  processed: number
+  classified: number
+  remaining: number
+  done: boolean
+  errors?: string[]
+}
+
+/**
+ * Classify up to `limit` unclassified posts (oldest first). Reads caption +
+ * thumbnail from the stored row and writes pillar + classification_source.
+ * Returns `remaining` (count still unclassified after this batch) and `done`
+ * so a browser can loop until the whole window is classified. Sized to stay
+ * under the 300s function limit; the caller loops for full coverage.
+ */
+export async function classifyUnclassified(
+  supabase: Supabase,
+  options: { limit?: number } = {},
+): Promise<ClassifyResult> {
+  // Small default so each request finishes well under a 60s function limit;
+  // the browser loops for full coverage.
+  const limit = options.limit ?? 8
+
+  const { data: rows, error } = await supabase
+    .from('instagram_posts')
+    .select('post_id, caption, thumbnail_url')
+    .is('classification_source', null)
+    .gte('post_date', POST_DATE_CUTOFF.toISOString())
+    .order('post_date', { ascending: true })
+    .limit(limit)
+
+  if (error) throw new Error(`Failed to read unclassified posts: ${error.message}`)
+
+  const posts = rows ?? []
+  if (posts.length === 0) {
+    return { processed: 0, classified: 0, remaining: 0, done: true }
+  }
+
+  const errors: string[] = []
+  const settled = await Promise.allSettled(
+    posts.map(async (p) => {
+      const { pillar, source } = await classifyPillar(
+        (p.caption as string) || '',
+        (p.thumbnail_url as string) || null,
+      )
+      const { error: upErr } = await supabase
+        .from('instagram_posts')
+        .update({ pillar, classification_source: source })
+        .eq('post_id', p.post_id)
+      if (upErr) throw new Error(upErr.message)
+    }),
+  )
+
+  let classified = 0
+  settled.forEach((r, i) => {
+    if (r.status === 'fulfilled') classified++
+    else errors.push(`${posts[i].post_id}: ${String(r.reason)}`)
+  })
+
+  // Re-count so the caller knows whether to keep looping. `done` is true when
+  // nothing is left OR nothing progressed (all failures) — a stuck batch must
+  // not loop forever; the caller surfaces the errors instead.
+  const remaining = await countUnclassified(supabase)
+  const done = remaining === 0 || classified === 0
+
+  return {
+    processed: posts.length,
+    classified,
+    remaining,
+    done,
     ...(errors.length > 0 && { errors }),
   }
 }

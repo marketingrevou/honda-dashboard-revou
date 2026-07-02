@@ -36,6 +36,9 @@ yarn-error.log*
 # n8n workflow exports (contain CRON_SECRET in plaintext)
 n8n-*.json
 
+# Playwright MCP debug artifacts (console logs, page snapshots)
+.playwright-mcp/
+
 # vercel
 .vercel
 
@@ -45,3 +48,6 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# Supabase CLI temp files
+supabase/.temp/

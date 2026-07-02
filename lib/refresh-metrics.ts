@@ -1,5 +1,15 @@
 import { createClient } from '@supabase/supabase-js'
-import { makeApify, runActor, REFRESH_ACTOR, type ApifyItem } from '@/lib/apify'
+import {
+  makeApify,
+  runActor,
+  startActor,
+  getRunStatus,
+  fetchRunItems,
+  REFRESH_ACTOR,
+  TERMINAL_STATUSES,
+  type ApifyItem,
+  type ApifyRunStatus,
+} from '@/lib/apify'
 
 export function makeSupabase() {
   return createClient(
@@ -46,6 +56,20 @@ async function refreshBatch(
     addParentData: false,
   })
 
+  return applyMetricUpdates(items, withUrl, supabase)
+}
+
+/**
+ * Apply the metrics from fetched Apify items back onto the matching post rows.
+ * Shared by the blocking cron path (refreshBatch) and the async admin path
+ * (ingestRefresh), so metric mapping never diverges. Updates ONLY
+ * likes/comments/views + thumbnail — never pillar/classification/caption.
+ */
+async function applyMetricUpdates(
+  items: ApifyItem[],
+  rows: PostRow[],
+  supabase: Supabase,
+): Promise<{ updated: number; errors: string[] }> {
   // Index fetched results by the Instagram media id, which equals our post_id.
   const byId = new Map<string, ApifyItem>()
   for (const it of items) {
@@ -56,7 +80,7 @@ async function refreshBatch(
   let updated = 0
   const errors: string[] = []
   await Promise.all(
-    withUrl.map(async (row) => {
+    rows.map(async (row) => {
       const it = byId.get(row.post_id)
       if (!it) {
         errors.push(`${row.post_id}: not returned`)
@@ -142,4 +166,86 @@ export async function countRefreshable(supabase: Supabase): Promise<number> {
     .select('post_id', { count: 'exact', head: true })
     .gte('post_date', cutoff.toISOString())
   return count ?? 0
+}
+
+// ─── Async refresh (Phase 4, for time-capped callers) ────────────────────────
+// Splits refreshMetrics into start + ingest so no single request waits for the
+// Apify run — required on the 60s Hobby plan. startRefresh reads the slice and
+// kicks off the actor; the caller polls the run; ingestRefresh applies metrics.
+// The cron keeps using the blocking refreshMetrics above.
+
+/** Read the [offset, offset+limit) slice of refreshable posts in post_id order. */
+async function readRefreshSlice(
+  supabase: Supabase,
+  offset: number,
+  limit: number,
+): Promise<PostRow[]> {
+  const cutoff = new Date()
+  cutoff.setUTCDate(cutoff.getUTCDate() - REFRESH_WINDOW_DAYS)
+  const { data, error } = await supabase
+    .from('instagram_posts')
+    .select('post_id, post_url')
+    .gte('post_date', cutoff.toISOString())
+    .order('post_id', { ascending: true })
+    .range(offset, offset + limit - 1)
+  if (error) throw new Error(`Failed to read posts: ${error.message}`)
+  return (data ?? []) as PostRow[]
+}
+
+/**
+ * Start the refresh actor for one slice without waiting. Returns the run ids
+ * plus the exact rows so ingest can map results back by post_id. `rows` is
+ * serialised through the client, so keep it to {post_id, post_url}.
+ */
+export async function startRefresh(
+  supabase: Supabase,
+  options: { offset?: number; limit?: number } = {},
+): Promise<{ runId: string | null; datasetId: string | null; rows: PostRow[] }> {
+  const offset = options.offset ?? 0
+  const limit = options.limit ?? CHUNK_SIZE
+  const rows = await readRefreshSlice(supabase, offset, limit)
+  const withUrl = rows.filter((r) => r.post_url)
+  if (withUrl.length === 0) {
+    // Nothing to fetch in this slice — signal "no run" so the caller skips
+    // polling and treats it as immediately ingested (0 updates).
+    return { runId: null, datasetId: null, rows }
+  }
+
+  const client = makeApify()
+  const { runId, datasetId } = await startActor(client, REFRESH_ACTOR, {
+    directUrls: withUrl.map((r) => r.post_url as string),
+    resultsType: 'posts',
+    resultsLimit: 1,
+    addParentData: false,
+  })
+  return { runId, datasetId, rows }
+}
+
+/** Poll a refresh run's status (thin wrapper so routes don't import the client). */
+export async function refreshRunStatus(runId: string): Promise<ApifyRunStatus> {
+  return getRunStatus(makeApify(), runId)
+}
+
+export function isTerminalStatus(status: string): boolean {
+  return TERMINAL_STATUSES.has(status)
+}
+
+/** Ingest a finished refresh run: fetch items and apply metric updates. */
+export async function ingestRefresh(
+  supabase: Supabase,
+  datasetId: string,
+  rows: PostRow[],
+): Promise<RefreshResult> {
+  const withUrl = rows.filter((r) => r.post_url)
+  if (withUrl.length === 0) {
+    return { processed: rows.length, updated: 0, failed: 0 }
+  }
+  const items = await fetchRunItems(makeApify(), datasetId)
+  const { updated, errors } = await applyMetricUpdates(items, withUrl, supabase)
+  return {
+    processed: rows.length,
+    updated,
+    failed: rows.length - updated,
+    ...(errors.length > 0 && { errors }),
+  }
 }

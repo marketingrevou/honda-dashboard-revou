@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import AccountsChip from './AccountsChip'
 import DateRangePicker from './DateRangePicker'
 
@@ -10,9 +11,10 @@ interface HeaderProps {
   accounts: string[]
   postCount: number
   logoutAction?: () => Promise<void>
+  isAdmin?: boolean
 }
 
-export default function Header({ dateFrom, dateTo, minDate, maxDate, accountCount, accounts, postCount, logoutAction }: HeaderProps) {
+export default function Header({ dateFrom, dateTo, minDate, maxDate, accountCount, accounts, postCount, logoutAction, isAdmin }: HeaderProps) {
   return (
     <header className="bg-white" style={{ borderTop: '4px solid #E62533', borderBottom: '1px solid #E5E7EB' }}>
       <div className="max-w-screen-xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3 flex-wrap lg:flex-nowrap">
@@ -40,6 +42,14 @@ export default function Header({ dateFrom, dateTo, minDate, maxDate, accountCoun
           <span className="meta-chip text-white" style={{ background: '#333333' }}>
             {postCount} Posts
           </span>
+          {isAdmin && (
+            <Link
+              href="/admin"
+              style={{ fontSize: '12px', color: '#E62533', fontWeight: 600, padding: '2px 4px', textDecoration: 'none' }}
+            >
+              Admin
+            </Link>
+          )}
           {logoutAction && (
             <form action={logoutAction}>
               <button

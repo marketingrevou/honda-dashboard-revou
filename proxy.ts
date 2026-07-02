@@ -40,5 +40,7 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*'],
+  // /admin gets the same session gate as /dashboard; the page + /api/admin
+  // routes enforce is_admin themselves (the proxy is deliberately DB-free).
+  matcher: ['/dashboard/:path*', '/admin/:path*'],
 }

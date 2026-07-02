@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { createHmac, timingSafeEqual } from 'crypto'
+import { cookies } from 'next/headers'
 
 /**
  * Server-side auth helpers for the dashboard login system.
@@ -68,4 +69,31 @@ export function verifySession(value: string | undefined): string | null {
   const b = Buffer.from(expected, 'hex')
   if (a.length !== b.length) return null
   return timingSafeEqual(a, b) ? username : null
+}
+
+/**
+ * Resolve the currently logged-in user from the request cookies, verifying the
+ * HMAC-signed session before trusting the username. Returns null if there's no
+ * valid session or the user no longer exists. Server-only (reads cookies + the
+ * service-role client).
+ */
+export async function getCurrentUser(): Promise<DashboardUser | null> {
+  const cookieStore = await cookies()
+  const username = verifySession(cookieStore.get(AUTH_COOKIE)?.value)
+  if (!username) return null
+  return getUserByUsername(username)
+}
+
+/**
+ * Guard for admin-only server actions and route handlers. Returns the user on
+ * success; throws otherwise. NEVER trust the client — every admin mutation must
+ * call this first, since server actions and routes are reachable via direct
+ * POST regardless of the UI or proxy.
+ */
+export async function requireAdmin(): Promise<DashboardUser> {
+  const user = await getCurrentUser()
+  if (!user || !user.is_admin) {
+    throw new Error('Forbidden: admin access required')
+  }
+  return user
 }

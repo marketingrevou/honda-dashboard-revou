@@ -1,0 +1,10 @@
+project_id = "gywnxuoaiwbbqxckwymn"
+
+# Both cron functions authenticate with a shared CRON_SECRET bearer (checked in
+# the handler), not a Supabase JWT, so JWT verification is disabled. pg_cron and
+# the admin dashboard pass `Authorization: Bearer <CRON_SECRET>`.
+[functions.scrape]
+verify_jwt = false
+
+[functions.refresh-metrics]
+verify_jwt = false

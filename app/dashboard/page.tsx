@@ -6,6 +6,7 @@ import InstagramSection from '../components/InstagramSection'
 import TrendSection from '../components/TrendSection'
 import Footer from '../components/Footer'
 import { logout } from '@/app/actions/auth'
+import { getCurrentUser } from '@/lib/auth-db'
 
 const MIN_DATE = '2026-05-18'
 
@@ -72,10 +73,11 @@ export default async function DashboardPage({
   const topRange: DateRange = { from: lastTwoWeeks.from, to: lastTwoWeeks.to }
   const topDateLabel = formatDateLabel(lastTwoWeeks.from, lastTwoWeeks.to)
 
-  const [instagramAccounts, topPosts, trendPosts] = await Promise.all([
+  const [instagramAccounts, topPosts, trendPosts, currentUser] = await Promise.all([
     getInstagramAccounts(dateRange),
     getTopPosts(topRange),
     getTrendData(dateRange),
+    getCurrentUser(),
   ])
 
   const totalPosts = instagramAccounts.reduce((s, a) => s + a.post_count, 0)
@@ -102,6 +104,7 @@ export default async function DashboardPage({
         ]}
         postCount={totalPosts}
         logoutAction={logout as () => Promise<void>}
+        isAdmin={currentUser?.is_admin ?? false}
       />
       <main className="max-w-screen-xl mx-auto px-6 pb-16">
         <InstagramSection accounts={instagramAccounts} dateLabel={dateLabel} dateFrom={from} dateTo={to} />

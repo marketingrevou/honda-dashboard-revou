@@ -1,0 +1,273 @@
+'use server'
+
+import { revalidatePath } from 'next/cache'
+import { makeAuthClient, requireAdmin } from '@/lib/auth-db'
+import { VALID_PILLARS, type PillarResult } from '@/lib/pillar-config'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Admin server actions — edit Supabase data from the /admin page.
+//
+// Every action calls requireAdmin() FIRST: server actions are reachable via
+// direct POST regardless of the UI or proxy, so authorization must be enforced
+// here, not just in the page. All writes use the service-role client
+// (makeAuthClient) since these tables have RLS with no public write policies.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ActionResult = { ok: true } | { ok: false; error: string }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Supabase Edge Function triggers.
+//
+// The scrape + metric-refresh pipeline runs on the Supabase Edge Functions
+// `scrape` and `refresh-metrics` (scheduled weekly by pg_cron). These actions
+// let an admin fire an on-demand full run from the dashboard. They call each
+// function with explicit ?chunk=/?offset= OVERRIDES so the manual run never
+// disturbs the weekly cron's cursor rotation (matching the override path in the
+// Edge Functions themselves).
+//
+// The CRON_SECRET bearer stays server-side — these are server actions, so the
+// secret is never shipped to the browser (why this is an action, not a
+// client-side fetch). Each function call blocks ~90-100s, so the actions run
+// chunks sequentially and the UI awaits one result per chunk.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SCRAPE_CHUNKS = 4 // matches chunkCount() in lib/run-update.ts (155 / 40)
+const REFRESH_CHUNK_SIZE = 150 // matches CHUNK_SIZE in lib/refresh-metrics.ts
+
+function edgeFunctionBase(): string {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  if (!url) throw new Error('NEXT_PUBLIC_SUPABASE_URL is not set')
+  return `${url}/functions/v1`
+}
+
+/** POST one Edge Function invocation with the CRON_SECRET bearer. */
+async function invokeEdgeFunction(
+  fn: 'scrape' | 'refresh-metrics',
+  query: string,
+): Promise<Record<string, unknown>> {
+  const secret = process.env.CRON_SECRET
+  if (!secret) throw new Error('CRON_SECRET is not set')
+
+  const res = await fetch(`${edgeFunctionBase()}/${fn}${query}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${secret}`,
+    },
+    body: '{}',
+    // Each chunk blocks on an Apify run (~90-100s). Give generous headroom.
+    signal: AbortSignal.timeout(290_000),
+  })
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>
+  if (!res.ok) {
+    const msg = (body.error as string) ?? `${res.status} ${res.statusText}`
+    throw new Error(msg)
+  }
+  return body
+}
+
+// A full run is 4 scrape chunks + ~6 refresh chunks, each blocking ~90-100s on
+// an Apify run — ~15 min total, far past any single function budget. So each
+// action call does ONE chunk and the client (UpdateRunner) loops, awaiting one
+// result per chunk. This is the same client-orchestrated pattern the old
+// Vercel-route runner used, just pointed at the Edge Functions.
+
+export type ScrapeChunkResult =
+  | {
+      ok: true
+      chunk: number
+      totalChunks: number
+      accountsProcessed: number
+      postsAdded: number
+      done: boolean
+      errors?: string[]
+    }
+  | { ok: false; error: string }
+
+export type RefreshChunkResult =
+  | {
+      ok: true
+      offset: number
+      total: number
+      processed: number
+      updated: number
+      nextOffset: number
+      done: boolean
+      errors?: string[]
+    }
+  | { ok: false; error: string }
+
+/**
+ * Scrape ONE account chunk on Supabase via the `scrape` Edge Function (upsert +
+ * classify). `?chunk=` override keeps the weekly cron cursor untouched. Returns
+ * `done` when this was the last chunk so the client can stop looping.
+ */
+export async function scrapeChunk(chunk: number): Promise<ScrapeChunkResult> {
+  try {
+    await requireAdmin()
+    const c = Math.max(0, Math.min(SCRAPE_CHUNKS - 1, chunk))
+    const r = await invokeEdgeFunction('scrape', `?chunk=${c}`)
+    const done = c >= SCRAPE_CHUNKS - 1
+    if (done) {
+      revalidatePath('/dashboard')
+      revalidatePath('/admin')
+    }
+    return {
+      ok: true,
+      chunk: c,
+      totalChunks: SCRAPE_CHUNKS,
+      accountsProcessed: (r.accountsProcessed as number) ?? 0,
+      postsAdded: (r.postsAdded as number) ?? 0,
+      done,
+      errors: r.errors as string[] | undefined,
+    }
+  } catch (err) {
+    return { ok: false, error: String(err instanceof Error ? err.message : err) }
+  }
+}
+
+/**
+ * Refresh ONE metric chunk on Supabase via the `refresh-metrics` Edge Function.
+ * `?offset=` override keeps the weekly cron cursor untouched. The client passes
+ * the returned `nextOffset` back in until `done`.
+ */
+export async function refreshChunk(offset: number): Promise<RefreshChunkResult> {
+  try {
+    await requireAdmin()
+    const o = Math.max(0, offset)
+    const r = await invokeEdgeFunction('refresh-metrics', `?offset=${o}`)
+    const total = (r.total as number) ?? 0
+    const nextOffset = o + REFRESH_CHUNK_SIZE
+    const done = total === 0 || nextOffset >= total
+    if (done) {
+      revalidatePath('/dashboard')
+      revalidatePath('/admin')
+    }
+    return {
+      ok: true,
+      offset: o,
+      total,
+      processed: (r.processed as number) ?? 0,
+      updated: (r.updated as number) ?? 0,
+      nextOffset,
+      done,
+      errors: r.errors as string[] | undefined,
+    }
+  } catch (err) {
+    return { ok: false, error: String(err instanceof Error ? err.message : err) }
+  }
+}
+
+function isValidPillar(value: string): value is PillarResult {
+  return (VALID_PILLARS as readonly string[]).includes(value)
+}
+
+/**
+ * Update a pillar's description in `pillar_config`. Fed into the AI prompt, so
+ * this changes classification behaviour for NEW classifications. Descriptions
+ * are memoised per process (see lib/pillar-config.ts), so a running server
+ * picks up the change on its next cold start; re-applying to existing posts
+ * needs a reclassify pass.
+ */
+export async function updatePillarDescription(
+  pillar: string,
+  description: string,
+): Promise<ActionResult> {
+  try {
+    await requireAdmin()
+    if (!isValidPillar(pillar)) return { ok: false, error: `Unknown pillar: ${pillar}` }
+    if (!description.trim()) return { ok: false, error: 'Description cannot be empty.' }
+
+    const supabase = makeAuthClient()
+    const { error } = await supabase
+      .from('pillar_config')
+      .upsert({ pillar, description }, { onConflict: 'pillar' })
+    if (error) return { ok: false, error: error.message }
+
+    revalidatePath('/admin')
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: String(err instanceof Error ? err.message : err) }
+  }
+}
+
+/** Manually override a single post's pillar classification. */
+export async function updatePostPillar(
+  postId: string,
+  pillar: string,
+): Promise<ActionResult> {
+  try {
+    await requireAdmin()
+    if (!isValidPillar(pillar)) return { ok: false, error: `Unknown pillar: ${pillar}` }
+
+    const supabase = makeAuthClient()
+    const { error } = await supabase
+      .from('instagram_posts')
+      .update({ pillar, classification_source: 'manual' })
+      .eq('post_id', postId)
+    if (error) return { ok: false, error: error.message }
+
+    revalidatePath('/admin')
+    revalidatePath('/dashboard')
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: String(err instanceof Error ? err.message : err) }
+  }
+}
+
+export interface PostSearchRow {
+  post_id: string
+  account_username: string
+  caption: string | null
+  thumbnail_url: string | null
+  pillar: string | null
+  post_date: string | null
+}
+
+/**
+ * Search posts by account username or caption for the post-pillar editor.
+ * Read-only; still admin-gated so the endpoint can't be used to enumerate data.
+ */
+export async function searchPosts(query: string): Promise<PostSearchRow[]> {
+  await requireAdmin()
+  const q = query.trim()
+  if (!q) return []
+
+  const supabase = makeAuthClient()
+  // Match either the handle or the caption. `or` with ilike gives a simple
+  // contains-search; escape %/, characters PostgREST treats specially.
+  const safe = q.replace(/[%,()]/g, ' ')
+  const { data, error } = await supabase
+    .from('instagram_posts')
+    .select('post_id, account_username, caption, thumbnail_url, pillar, post_date')
+    .or(`account_username.ilike.%${safe}%,caption.ilike.%${safe}%`)
+    .order('post_date', { ascending: false })
+    .limit(25)
+  if (error) throw new Error(error.message)
+  return (data ?? []) as PostSearchRow[]
+}
+
+/** Update editable dealer labels on an account. */
+export async function updateAccount(
+  username: string,
+  fields: { dealer_name: string | null; main_dealer: string | null },
+): Promise<ActionResult> {
+  try {
+    await requireAdmin()
+    const supabase = makeAuthClient()
+    const { error } = await supabase
+      .from('instagram_accounts')
+      .update({
+        dealer_name: fields.dealer_name?.trim() || null,
+        main_dealer: fields.main_dealer?.trim() || null,
+      })
+      .eq('username', username)
+    if (error) return { ok: false, error: error.message }
+
+    revalidatePath('/admin')
+    revalidatePath('/dashboard')
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: String(err instanceof Error ? err.message : err) }
+  }
+}

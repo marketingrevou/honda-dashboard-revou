@@ -5,7 +5,6 @@ import { getCurrentUser, makeAuthClient } from '@/lib/auth-db'
 import { VALID_PILLARS, PILLAR_DESCRIPTIONS_FALLBACK } from '@/lib/pillar-config'
 import { logout } from '@/app/actions/auth'
 import PillarConfigEditor from '@/app/components/admin/PillarConfigEditor'
-import PostPillarEditor from '@/app/components/admin/PostPillarEditor'
 import AccountEditor, { type AccountRow } from '@/app/components/admin/AccountEditor'
 import UpdateRunner from '@/app/components/admin/UpdateRunner'
 
@@ -63,7 +62,6 @@ async function AdminContent() {
     <>
       <UpdateRunner />
       <PillarConfigEditor rows={pillars} />
-      <PostPillarEditor pillars={VALID_PILLARS} />
       <AccountEditor accounts={accounts} />
     </>
   )

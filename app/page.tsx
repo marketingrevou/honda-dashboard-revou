@@ -17,7 +17,7 @@ export default function LoginPage() {
           type="text"
           required
           autoComplete="username"
-          placeholder="Your Instagram username"
+          placeholder="Your username"
         />
 
         <PasswordField id="password" name="password" label="Password" autoComplete="current-password" />

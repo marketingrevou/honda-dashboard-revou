@@ -34,7 +34,7 @@ export async function login(
   cookieStore.set(AUTH_COOKIE, signSession(user.username), cookieOpts)
   cookieStore.set(USER_COOKIE, user.username, cookieOpts)
 
-  redirect('/dashboard')
+  redirect(user.is_admin ? '/admin' : '/dashboard')
 }
 
 export async function logout() {

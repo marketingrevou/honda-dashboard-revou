@@ -1,7 +1,8 @@
-// Deno port of the scrape half of lib/run-update.ts — the ACCOUNTS list,
+// Deno port of the scrape half of lib/run-update.ts — the account-list loader,
 // chunking constants, and the blocking scrape → upsert → classify pipeline used
-// by the `scrape` Edge Function. Only the blocking path is ported (the cron uses
-// it); the async start/poll/ingest admin helpers stay in the Next.js app.
+// by the `scrape` Edge Function. The account list is read live from the
+// instagram_accounts table (scrape_enabled = true), so admin add/remove drives
+// what gets scraped. Only the blocking path is ported (the cron uses it).
 
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2'
 import { classifyPillar } from './classify-pillar.ts'
@@ -13,35 +14,30 @@ import {
   type ApifyItem,
 } from './apify.ts'
 
-// Source of truth: Honda-NewList15June.csv (155 accounts, synced 2026-06-15).
-export const ACCOUNTS = [
-  'hondaaristadepok.official', 'hondaaristamanggadua.id', 'honda.arta', 'hondakebonjerukofficial', 'hondamegahcinere', 'honda.megatamabekasi',
-  'hondanusantarabekasi.official', 'hondanusantara.official', 'hondapondokcabe125', 'honda_tebet', 'hondatendean0119', 'hondastarmotortasik_official',
-  'hondakumalaofficial', 'hondaautoserangofficial', 'hondakumalaofficial_cikampek', 'hondaautocilegonofficial', 'hondabintang_official', 'hondasolobaruofficial',
-  'hondasalatigajaya.official', 'hondapatijayaa', 'hondabsb_official', 'hondaperkasaklaten_official', 'hondadaim', 'hondanagamotorntb',
-  'hondapacifickediri', 'hondasuryaagung', 'hondadewata.official', 'hondaistanajbr', 'hondamitramojokerto.official', 'hondasukun',
-  'hondakupangindah_', 'hondamitratuban_official', 'hondaistanabanyuwangi', 'hondamitragresik.official', 'hondapacifictulungagung', 'hondalestari',
-  'hondacokro.id', 'hondabintangmadiun', 'hondaprisma', 'hondatabananbali', 'hondamajupalembang', 'hondagajahmotorofficial',
-  'hondaniagabangkaofficial', 'hondaniagasudirmanofficial', 'hondaaristabandaaceh.official', 'honda.wiltop.jambi', 'hondasoekarnohattapekanbaru', 'hondaaristapekanbaru_official',
-  'hondaaristaringroad', 'hondasmaminofficial', 'hondaintimobil', 'honda_kmgmanado', 'hondaselarasambon', 'hondatriopalangkaraya.id',
-  'hondakmg_palu', 'hondaboneindah', 'balindomamuju_official', 'hondainternusa.makassar', 'hondaselarasternate_hst', 'hondamobil.remajajaya',
-  'primautohonda', 'hondabintangusedcar', 'hondausedcarpuri', 'hondawiltop_usedcar', 'hondaanugerahusedcar', 'hondakmgcertifiedusedcar',
-  'hondaunionauto', 'hondasanggarlaut.usedcar', 'honda_aldea_used_car', 'hondanenggausedcar', 'usedcarhondabintangsolo', 'ambarausedcar',
-  'amarthausedcar', 'hondaaristajatinegara.id', 'hondaautolandgroup', 'hondacakrapangukir', 'hondafatmawatiofficial', 'hondaikmciledug',
-  'hondaikmdaanmogot', 'imorasentul', 'hondainternusacibinong', 'hondamandiribogorofficial', 'hondamegatamakalimalang', 'hondamegatamakapuk',
-  'hondamitrajatiasihofficial', 'hondamitralentengagung', 'hondapasarminggu', 'hondapurikembangan', 'hondapermatahijauofficial', 'hondabogor.id',
-  'hondasunter', 'hondacijantungofficial', 'honda.lppm', 'hondamulyaputra', 'hondaayani.official', 'hondasonic368',
-  'hondaeiyu', 'honda.perdanasukabumi', 'hac.hondaabadicibiru', 'ibrmcimahiofficials', 'hondaanugerah_official', 'hondaistanacarindo_official',
-  'hondakusumaofficial', 'hondapekalonganmotor_official', 'hondatuguofficial', 'hondatunasjaya_official', 'hondakudusjayaofficial', 'hondategalraya_official',
-  'hondasumbercilacappurwokerto', 'honda_sumber_official', 'hondajepara.official', 'hondagajahmada_official', 'hondaaristasmraja.official', 'hondaunionmotor',
-  'hondanagoya', 'hondatamankota_official', 'jambi.honda', 'hondabintanpratama_', 'hondaidkcemara_official', 'hondaidk2seibatanghari',
-  'hondaaristarajabasa', 'hondacikarang_', 'hondatriobanjarmasin.id', 'hondamitrajayapura', 'hondabalindoresmi', 'hondasanggarlautselatan',
-  'honda.sanggarlautpalopo', 'hondamim', 'honda.martadinata2', 'hondanusantarasmd.official', 'honda_cahaya_gratia', 'hondaamartha',
-  'hondadayamotorkalbar', 'hondanenggamobilindo_', 'hondanusantarabalikpapan', 'hondabintangcimone', 'honda.cibubur', 'hondaimora',
-  'honda_kencana_kranji', 'hondapermataofficial', 'hondaphi', 'hondatrenalamsutera', 'honda.autobest', 'hondamuliacianjurofficial',
-  'ibrmsubangofficial', 'ibrmofficial', 'hondasemarangcenter_dealer', 'hondaanugerahsejahteraofficial', 'hondamandalasenamlg', 'honda.royalwiyung',
-  'hondaroyalkenjeran', 'hondasurabayacenter.imsi', 'hondaidk1medan', 'hondaaristabengkulu.official', 'hondatriobanjarbaru.id',
-]
+// The account list is the source of truth in the `instagram_accounts` table
+// (scrape_enabled = true), NOT a hardcoded array — admins add/remove dealers from
+// the admin page. Always read it ORDERED BY username so chunk boundaries stay
+// stable across cron runs (the cursor slices by position, so a non-deterministic
+// order would shift chunk edges and skip dealers).
+export async function loadAccounts(supabase: SupabaseClient): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('instagram_accounts')
+    .select('username')
+    .eq('scrape_enabled', true)
+    .order('username', { ascending: true })
+  if (error) throw new Error(`Failed to load account list: ${error.message}`)
+  return (data ?? []).map((r: { username: string }) => r.username)
+}
+
+/** Count of scrape-enabled accounts — drives dynamic chunk count. */
+export async function countAccounts(supabase: SupabaseClient): Promise<number> {
+  const { count, error } = await supabase
+    .from('instagram_accounts')
+    .select('username', { count: 'exact', head: true })
+    .eq('scrape_enabled', true)
+  if (error) throw new Error(`Failed to count accounts: ${error.message}`)
+  return count ?? 0
+}
 
 const PROFILE_PIC_BUCKET = 'profile-pics'
 
@@ -56,12 +52,14 @@ const POST_DATE_CUTOFF = new Date('2026-05-18T00:00:00Z')
 /**
  * Accounts processed per invocation. The discovery actor takes a whole batch of
  * usernames in a single run, so 40 accounts is one actor call. The cron advances
- * a cursor each run so the whole list is covered across ceil(155/40) = 4 runs.
+ * a cursor each run so the whole enabled list is covered across
+ * ceil(enabledCount / 40) runs.
  */
 export const CHUNK_SIZE = 40
 
-export function chunkCount(): number {
-  return Math.ceil(ACCOUNTS.length / CHUNK_SIZE)
+/** Number of chunks needed to cover `total` enabled accounts. */
+export function chunkCount(total: number): number {
+  return Math.max(1, Math.ceil(total / CHUNK_SIZE))
 }
 
 /**
@@ -236,15 +234,20 @@ export interface UpdateResult {
   errors?: string[]
 }
 
-/** Process accounts in `[offset, offset + limit)` of the ACCOUNTS list. */
+/**
+ * Process the scrape-enabled accounts in `[offset, offset + limit)`. The list is
+ * loaded from the DB (ordered by username) each run, so add/remove in the admin
+ * page takes effect on the next scrape.
+ */
 export async function runUpdate(
   supabase: SupabaseClient,
   options: { offset?: number; limit?: number } = {},
 ): Promise<UpdateResult> {
+  const accounts = await loadAccounts(supabase)
   const offset = options.offset ?? 0
-  const limit = options.limit ?? ACCOUNTS.length
+  const limit = options.limit ?? accounts.length
 
-  const slice = ACCOUNTS.slice(offset, offset + limit)
+  const slice = accounts.slice(offset, offset + limit)
   const results = await processBatch(slice, supabase)
 
   const accountsProcessed = results.filter((r) => !r.error).length

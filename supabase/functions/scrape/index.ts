@@ -1,8 +1,10 @@
 // Edge Function `scrape` — port of app/api/cron/update/route.ts.
 //
-// Each invocation scrapes one CHUNK_SIZE slice of ACCOUNTS via the Apify
+// Each invocation scrapes one CHUNK_SIZE slice of the scrape-enabled accounts
+// (read live from instagram_accounts, ordered by username) via the Apify
 // discovery actor, upserts + classifies the posts, and advances scrape_state's
-// cursor (wrapping) so ceil(155/40)=4 invocations cover the whole list.
+// cursor (wrapping) so ceil(enabledCount/40) invocations cover the whole list.
+// The chunk count is dynamic: adding/removing accounts changes it automatically.
 //
 // Auth: expects `Authorization: Bearer <CRON_SECRET>` (same secret the Vercel
 // cron used), so pg_cron and the admin dashboard can both trigger it. JWT
@@ -11,7 +13,7 @@
 
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { runUpdate, CHUNK_SIZE, chunkCount } from '../_shared/run-update.ts'
+import { runUpdate, CHUNK_SIZE, chunkCount, countAccounts } from '../_shared/run-update.ts'
 
 Deno.serve(async (req) => {
   const auth = req.headers.get('authorization')
@@ -26,7 +28,8 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   )
-  const total = chunkCount()
+  const enabledCount = await countAccounts(supabase)
+  const total = chunkCount(enabledCount)
 
   // An explicit chunk override (query param or JSON body) backfills one slice
   // without disturbing the cron's rotation. Body is optional (pg_cron sends {}).

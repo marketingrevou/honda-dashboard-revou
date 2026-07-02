@@ -31,8 +31,12 @@ export type ActionResult = { ok: true } | { ok: false; error: string }
 // chunks sequentially and the UI awaits one result per chunk.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SCRAPE_CHUNKS = 4 // matches chunkCount() in lib/run-update.ts (155 / 40)
 const REFRESH_CHUNK_SIZE = 150 // matches CHUNK_SIZE in lib/refresh-metrics.ts
+
+// Fallback used only if the scrape function's response omits totalChunks. The
+// real chunk count is dynamic (ceil(enabled accounts / 40)) and comes back in
+// the response, so add/remove in the admin page changes it automatically.
+const SCRAPE_CHUNKS_FALLBACK = 4
 
 function edgeFunctionBase(): string {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -105,17 +109,20 @@ export type RefreshChunkResult =
 export async function scrapeChunk(chunk: number): Promise<ScrapeChunkResult> {
   try {
     await requireAdmin()
-    const c = Math.max(0, Math.min(SCRAPE_CHUNKS - 1, chunk))
+    const c = Math.max(0, chunk)
     const r = await invokeEdgeFunction('scrape', `?chunk=${c}`)
-    const done = c >= SCRAPE_CHUNKS - 1
+    // The function returns the live chunk count (ceil(enabled accounts / 40)),
+    // so the loop covers exactly the accounts that exist right now.
+    const totalChunks = (r.totalChunks as number) ?? SCRAPE_CHUNKS_FALLBACK
+    const done = c >= totalChunks - 1
     if (done) {
       revalidatePath('/dashboard')
       revalidatePath('/admin')
     }
     return {
       ok: true,
-      chunk: c,
-      totalChunks: SCRAPE_CHUNKS,
+      chunk: (r.chunk as number) ?? c,
+      totalChunks,
       accountsProcessed: (r.accountsProcessed as number) ?? 0,
       postsAdded: (r.postsAdded as number) ?? 0,
       done,
@@ -261,6 +268,92 @@ export async function updateAccount(
         dealer_name: fields.dealer_name?.trim() || null,
         main_dealer: fields.main_dealer?.trim() || null,
       })
+      .eq('username', username)
+    if (error) return { ok: false, error: error.message }
+
+    revalidatePath('/admin')
+    revalidatePath('/dashboard')
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: String(err instanceof Error ? err.message : err) }
+  }
+}
+
+/**
+ * Normalise whatever an admin pastes into a bare IG handle: strip a leading @,
+ * a full profile URL, query strings, and surrounding whitespace; lowercase it.
+ * Returns '' if nothing usable remains.
+ */
+function normaliseUsername(raw: string): string {
+  let s = raw.trim()
+  // Pull the handle out of a profile URL if one was pasted.
+  const urlMatch = s.match(/instagram\.com\/([^/?#]+)/i)
+  if (urlMatch) s = urlMatch[1]
+  s = s.replace(/^@/, '').trim().toLowerCase()
+  // IG handles: letters, digits, period, underscore.
+  return /^[a-z0-9._]+$/.test(s) ? s : ''
+}
+
+/**
+ * Add a new dealer to the scrape list. Inserts an enabled row into
+ * instagram_accounts; the scraper reads its list from this table (ordered by
+ * username), so the account is picked up on the next scrape. The username is the
+ * only required field — labels can be edited later, and full_name/thumbnail get
+ * filled in by the scrape.
+ */
+export async function addAccount(
+  rawUsername: string,
+  fields: { dealer_name?: string | null; main_dealer?: string | null } = {},
+): Promise<ActionResult> {
+  try {
+    await requireAdmin()
+    const username = normaliseUsername(rawUsername)
+    if (!username) {
+      return { ok: false, error: 'Enter a valid Instagram username (letters, numbers, . and _).' }
+    }
+
+    const supabase = makeAuthClient()
+
+    // Friendly duplicate check before insert (the unique constraint would also
+    // catch it, but this gives a clearer message).
+    const { data: existing } = await supabase
+      .from('instagram_accounts')
+      .select('username')
+      .eq('username', username)
+      .maybeSingle()
+    if (existing) return { ok: false, error: `@${username} is already in the list.` }
+
+    const { error } = await supabase.from('instagram_accounts').insert({
+      username,
+      full_name: username, // placeholder until the first scrape fills it in
+      dealer_name: fields.dealer_name?.trim() || null,
+      main_dealer: fields.main_dealer?.trim() || null,
+      scrape_enabled: true,
+    })
+    if (error) return { ok: false, error: error.message }
+
+    revalidatePath('/admin')
+    revalidatePath('/dashboard')
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: String(err instanceof Error ? err.message : err) }
+  }
+}
+
+/**
+ * Hard-delete a dealer: removes the instagram_accounts row AND all its
+ * instagram_posts (the FK is ON DELETE CASCADE). Permanent — the dealer's data
+ * leaves the dashboard entirely and it stops being scraped.
+ */
+export async function deleteAccount(username: string): Promise<ActionResult> {
+  try {
+    await requireAdmin()
+    if (!username?.trim()) return { ok: false, error: 'No account specified.' }
+
+    const supabase = makeAuthClient()
+    const { error } = await supabase
+      .from('instagram_accounts')
+      .delete()
       .eq('username', username)
     if (error) return { ok: false, error: error.message }
 

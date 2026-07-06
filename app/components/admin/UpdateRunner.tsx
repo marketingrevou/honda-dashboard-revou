@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react'
 import { Button, Card } from './ui'
-import { scrapeChunk, refreshChunk } from '@/app/actions/admin'
+import { scrapeChunk, refreshChunk, sendRunNotification } from '@/app/actions/admin'
 
 type LogLine = { text: string; kind: 'info' | 'phase' | 'ok' | 'error' }
 
@@ -28,16 +28,44 @@ function useRunner() {
   const [lines, setLines] = useState<LogLine[]>([])
   // Guard against overlapping runs even across quick re-renders.
   const activeRef = useRef(false)
+  // Plain-text transcript of the current run, readable synchronously when we
+  // send the notification email (state updates are async, so we can't read
+  // `lines` back at the end of runUpdate/runReclassify).
+  const transcriptRef = useRef<string[]>([])
+
+  function resetLog() {
+    transcriptRef.current = []
+    setLines([])
+  }
 
   function log(text: string, kind: LogLine['kind'] = 'info') {
+    transcriptRef.current.push(text)
     setLines((prev) => [...prev, { text, kind }])
   }
 
-  return { running, setRunning, lines, setLines, log, activeRef }
+  return { running, setRunning, lines, resetLog, log, activeRef, transcriptRef }
 }
 
 export default function UpdateRunner() {
-  const { running, setRunning, lines, setLines, log, activeRef } = useRunner()
+  const { running, setRunning, lines, resetLog, log, activeRef, transcriptRef } = useRunner()
+
+  /**
+   * Email the run outcome to the ops address. Best-effort: a failed send is
+   * logged inline but never rethrown, so it can't turn a good run bad.
+   */
+  async function notify(job: string, status: 'success' | 'failure', summary: string) {
+    try {
+      const r = await sendRunNotification({
+        job,
+        status,
+        summary,
+        logLines: transcriptRef.current,
+      })
+      if (!r.ok) log(`  (notification email not sent: ${r.error})`, 'error')
+    } catch (err) {
+      log(`  (notification email not sent: ${err instanceof Error ? err.message : String(err)})`, 'error')
+    }
+  }
 
   async function runUpdate() {
     if (activeRef.current) return
@@ -46,7 +74,7 @@ export default function UpdateRunner() {
     }
     activeRef.current = true
     setRunning(true)
-    setLines([])
+    resetLog()
 
     try {
       // ── Phase 1: scrape + classify all account chunks (Supabase `scrape`) ──
@@ -89,8 +117,11 @@ export default function UpdateRunner() {
       }
 
       log('Update complete ✓', 'phase')
+      await notify('Update', 'success', 'The full Update pipeline (scrape + classify + refresh metrics) finished successfully.')
     } catch (err) {
-      log(`Failed: ${err instanceof Error ? err.message : String(err)}`, 'error')
+      const msg = err instanceof Error ? err.message : String(err)
+      log(`Failed: ${msg}`, 'error')
+      await notify('Update', 'failure', `The Update pipeline failed: ${msg}`)
     } finally {
       activeRef.current = false
       setRunning(false)
@@ -102,7 +133,7 @@ export default function UpdateRunner() {
     if (!window.confirm('Re-run vision classification on all posts marked Negative? Uses OpenAI credits.')) return
     activeRef.current = true
     setRunning(true)
-    setLines([])
+    resetLog()
     try {
       log('Reclassifying Negative posts…', 'phase')
       let totalReclassified = 0
@@ -118,8 +149,11 @@ export default function UpdateRunner() {
         if (r.done) break
       }
       log(`Reclassify complete ✓ (${totalReclassified} moved off Negative)`, 'phase')
+      await notify('Reclassify Negatives', 'success', `Reclassify finished successfully (${totalReclassified} posts moved off Negative).`)
     } catch (err) {
-      log(`Failed: ${err instanceof Error ? err.message : String(err)}`, 'error')
+      const msg = err instanceof Error ? err.message : String(err)
+      log(`Failed: ${msg}`, 'error')
+      await notify('Reclassify Negatives', 'failure', `Reclassify failed: ${msg}`)
     } finally {
       activeRef.current = false
       setRunning(false)

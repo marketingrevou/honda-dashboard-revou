@@ -16,6 +16,77 @@ import { VALID_PILLARS, type PillarResult } from '@/lib/pillar-config'
 export type ActionResult = { ok: true } | { ok: false; error: string }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Run notifications (Resend).
+//
+// After a manual pipeline run finishes, the client asks us to email a summary to
+// the ops address. The RESEND_API_KEY stays server-side (this is a server
+// action), and we call Resend's REST API directly with fetch — no SDK needed,
+// matching how the Edge Functions are already invoked. Notifications are
+// best-effort: a failed send never turns a successful run into an error, so this
+// action swallows send failures into an { ok:false } the client can log-and-move-on.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const NOTIFY_TO = 'andrew@revou.co'
+// Resend's shared sandbox sender — works without verifying a custom domain.
+const NOTIFY_FROM = 'Honda Dashboard <onboarding@resend.dev>'
+
+export type RunNotification = {
+  job: string // e.g. "Update" or "Reclassify Negatives"
+  status: 'success' | 'failure'
+  summary: string // human-readable outcome / error, shown in the email body
+  logLines?: string[] // full run log, appended verbatim for context
+}
+
+/**
+ * Email a run summary to the ops address via Resend. Best-effort: returns
+ * { ok:false } (never throws) so a failed notification can't mask a successful
+ * pipeline run in the UI.
+ */
+export async function sendRunNotification(n: RunNotification): Promise<ActionResult> {
+  try {
+    await requireAdmin()
+    const key = process.env.RESEND_API_KEY
+    if (!key) return { ok: false, error: 'RESEND_API_KEY is not set' }
+
+    const ok = n.status === 'success'
+    const subject = `[Honda Dashboard] ${n.job} ${ok ? 'succeeded ✓' : 'failed ✕'}`
+    const log = (n.logLines ?? []).join('\n')
+    const html = [
+      `<h2 style="margin:0 0 8px;font-family:sans-serif">${n.job} ${ok ? 'succeeded ✓' : 'failed ✕'}</h2>`,
+      `<p style="font-family:sans-serif;color:${ok ? '#166534' : '#991B1B'}">${escapeHtml(n.summary)}</p>`,
+      log
+        ? `<pre style="background:#111827;color:#E5E7EB;padding:12px 14px;border-radius:6px;font-size:12px;overflow:auto">${escapeHtml(log)}</pre>`
+        : '',
+    ].join('')
+
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({ from: NOTIFY_FROM, to: NOTIFY_TO, subject, html }),
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { message?: string }
+      return { ok: false, error: body.message ?? `${res.status} ${res.statusText}` }
+    }
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: String(err instanceof Error ? err.message : err) }
+  }
+}
+
+/** Minimal HTML-escape for user/log-derived text embedded in the email body. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Supabase Edge Function triggers.
 //
 // The scrape + metric-refresh pipeline runs on the Supabase Edge Functions

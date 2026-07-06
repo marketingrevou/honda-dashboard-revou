@@ -109,9 +109,11 @@ function escapeHtml(s: string): string {
 const REFRESH_CHUNK_SIZE = 150 // matches CHUNK_SIZE in lib/refresh-metrics.ts
 
 // Fallback used only if the scrape function's response omits totalChunks. The
-// real chunk count is dynamic (ceil(enabled accounts / 40)) and comes back in
-// the response, so add/remove in the admin page changes it automatically.
-const SCRAPE_CHUNKS_FALLBACK = 4
+// real chunk count is dynamic (ceil(enabled accounts / CHUNK_SIZE), CHUNK_SIZE
+// = 20 in the Edge Function) and comes back in the response, so add/remove in
+// the admin page changes it automatically. Kept comfortably high so that if the
+// count were ever missing the client over-covers rather than stops short.
+const SCRAPE_CHUNKS_FALLBACK = 8
 
 function edgeFunctionBase(): string {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL

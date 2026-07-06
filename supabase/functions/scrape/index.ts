@@ -3,7 +3,7 @@
 // Each invocation scrapes one CHUNK_SIZE slice of the scrape-enabled accounts
 // (read live from instagram_accounts, ordered by username) via the Apify
 // discovery actor, upserts + classifies the posts, and advances scrape_state's
-// cursor (wrapping) so ceil(enabledCount/40) invocations cover the whole list.
+// cursor (wrapping) so ceil(enabledCount/CHUNK_SIZE) invocations cover the list.
 // The chunk count is dynamic: adding/removing accounts changes it automatically.
 //
 // Auth: expects `Authorization: Bearer <CRON_SECRET>` (same secret the Vercel

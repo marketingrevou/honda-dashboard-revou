@@ -51,11 +51,16 @@ const POST_DATE_CUTOFF = new Date('2026-05-18T00:00:00Z')
 
 /**
  * Accounts processed per invocation. The discovery actor takes a whole batch of
- * usernames in a single run, so 40 accounts is one actor call. The cron advances
- * a cursor each run so the whole enabled list is covered across
- * ceil(enabledCount / 40) runs.
+ * usernames in a single run, and every fetched post is then classified (an
+ * OpenAI vision call) within the same worker — so this size sets the per-run
+ * CPU/wall-clock cost. At 40 the scrape+classify pass could exceed the Edge
+ * Function worker limit (HTTP 546 WORKER_LIMIT) on heavier chunks, so it's set
+ * to 20: more, smaller invocations that each stay well under the budget. The
+ * cron advances a cursor each run so the whole enabled list is covered across
+ * ceil(enabledCount / CHUNK_SIZE) runs; the client loops chunks until `done`,
+ * so this change needs no client-side edit.
  */
-export const CHUNK_SIZE = 40
+export const CHUNK_SIZE = 20
 
 /** Number of chunks needed to cover `total` enabled accounts. */
 export function chunkCount(total: number): number {

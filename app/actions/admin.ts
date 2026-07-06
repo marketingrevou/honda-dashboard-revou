@@ -26,7 +26,11 @@ export type ActionResult = { ok: true } | { ok: false; error: string }
 // action swallows send failures into an { ok:false } the client can log-and-move-on.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const NOTIFY_TO = 'andrew@revou.co'
+// Resend's sandbox sender (onboarding@resend.dev) can only deliver to the
+// Resend account owner's own verified address — marketing@revou.co. To notify
+// andrew@revou.co (or anyone else), verify revou.co at resend.com/domains and
+// send from an address on that domain, then change this.
+const NOTIFY_TO = 'marketing@revou.co'
 // Resend's shared sandbox sender — works without verifying a custom domain.
 const NOTIFY_FROM = 'Honda Dashboard <onboarding@resend.dev>'
 

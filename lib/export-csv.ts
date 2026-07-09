@@ -6,6 +6,7 @@ const PILLAR_KEYS: PillarLabel[] = [
   'Customer Story',
   'Promo Activation',
   'Negative',
+  'Others',
 ]
 
 function cell(val: string | number | null | undefined): string {
@@ -36,6 +37,7 @@ export function exportAccountsCSV(
     'Customer Story',
     'Promo Activation',
     'Negative',
+    'Others',
   ]
 
   const rows = accounts.map((a, i) => [

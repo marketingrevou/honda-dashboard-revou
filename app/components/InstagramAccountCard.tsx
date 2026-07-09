@@ -10,6 +10,7 @@ const PILLAR_SHORT: Record<PillarLabel, string> = {
   'Customer Story': 'Customer Story',
   'Promo Activation': 'Promo',
   'Negative': 'Negative',
+  'Others': 'Others',
 }
 
 function formatNum(n: number): string {

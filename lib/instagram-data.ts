@@ -100,6 +100,7 @@ const ALL_PILLARS: PillarLabel[] = [
   'Customer Story',
   'Promo Activation',
   'Negative',
+  'Others',
 ]
 
 export async function getInstagramAccounts(dateRange: DateRange): Promise<InstagramAccount[]> {

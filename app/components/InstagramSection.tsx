@@ -12,6 +12,7 @@ const PILLAR_COLS: { key: PillarLabel; label: string }[] = [
   { key: 'Customer Story',              label: 'Customer Story' },
   { key: 'Promo Activation',            label: 'Promo' },
   { key: 'Negative',                    label: 'Negative' },
+  { key: 'Others',                      label: 'Others' },
 ]
 
 const CENTER_COLS = new Set(['#', 'Posts', 'Likes', 'Views', 'Comments', ...PILLAR_COLS.map(p => p.label)])
@@ -280,8 +281,11 @@ export default function InstagramSection({ accounts, dateLabel, dateFrom, dateTo
     count: filtered.reduce((s, a) => s + (a.pillar_breakdown[key] ?? 0), 0),
   }))
 
-  const negativePosts = pillarTotals.find(p => p.key === 'Negative')?.count ?? 0
-  const onBrandRate   = totalPosts > 0 ? Math.round(((totalPosts - negativePosts) / totalPosts) * 100) : 0
+  // On-brand = the 4 content pillars only. Negative and Others are both excluded.
+  const offBrandPosts = pillarTotals
+    .filter(p => p.key === 'Negative' || p.key === 'Others')
+    .reduce((s, p) => s + p.count, 0)
+  const onBrandRate   = totalPosts > 0 ? Math.round(((totalPosts - offBrandPosts) / totalPosts) * 100) : 0
 
   function toggleDealer(dealer: string) {
     setSelectedDealers(prev =>

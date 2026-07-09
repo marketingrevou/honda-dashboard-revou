@@ -13,6 +13,7 @@ const PILLARS: { key: PillarLabel; label: string }[] = [
   { key: 'Customer Story', label: 'Customer Story' },
   { key: 'Promo Activation', label: 'Promo' },
   { key: 'Negative', label: 'Negative' },
+  { key: 'Others', label: 'Others' },
 ]
 
 interface Props {

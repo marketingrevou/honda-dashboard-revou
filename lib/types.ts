@@ -35,6 +35,7 @@ export type PillarLabel =
   | 'Customer Story'
   | 'Promo Activation'
   | 'Negative'
+  | 'Others'
 
 export const PILLAR_COLOR: Record<PillarLabel, string> = {
   'Product Value & Information': '#E62533',
@@ -42,15 +43,17 @@ export const PILLAR_COLOR: Record<PillarLabel, string> = {
   'Customer Story': '#1D6FA4',
   'Promo Activation': '#D97706',
   'Negative': '#9CA3AF',
+  'Others': '#6B7280',
 }
 
-/** Compact labels for the 5 pillars, used in badges/chips. */
+/** Compact labels for the 6 pillars, used in badges/chips. */
 export const PILLAR_SHORT: Record<PillarLabel, string> = {
   'Product Value & Information': 'Product Value',
   'Dealer Credibility': 'Credibility',
   'Customer Story': 'Customer Story',
   'Promo Activation': 'Promo',
   'Negative': 'Negative',
+  'Others': 'Others',
 }
 
 export interface InstagramAccount {

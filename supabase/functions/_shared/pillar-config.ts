@@ -15,6 +15,7 @@ export const VALID_PILLARS = [
   'Customer Story',
   'Promo Activation',
   'Negative',
+  'Others',
 ] as const
 
 export type PillarResult = typeof VALID_PILLARS[number]
@@ -29,6 +30,8 @@ export const PILLAR_DESCRIPTIONS_FALLBACK: Record<PillarResult, string> = {
     'testimoni customer, serah terima/delivery unit, review pembeli, customer bahagia dengan mobilnya',
   'Promo Activation':
     'promo, diskon, cashback, giveaway, event, penawaran tukar tambah, bunga 0%',
+  'Others':
+    'konten yang tidak masuk salah satu dari 4 pillar di atas dan juga bukan Negative — netral/generik namun tetap layak brand (mis. ucapan umum, konten seasonal tanpa produk, info lain-lain)',
   'Negative': `HANYA untuk konten yang benar-benar berbahaya atau tidak sesuai brand, sesuai salah satu dari 6 kategori ini:
   1. Internal Complaint / Self-Downgrading — staf mengeluh soal pekerjaan/target ("capek jadi sales", "3 bulan belum closing", "sales dikejar target terus")
   2. Clickbait / Viral tanpa Value — video trend/joget tanpa menampilkan mobil, meme random tidak terkait otomotif, caption tidak ada hubungannya dengan produk
@@ -73,12 +76,14 @@ export async function getPillarDefinitions(supabase: SupabaseClient): Promise<st
   const descriptions = await getPillarDescriptions(supabase)
 
   const positivePillars = `Pillar konten:
-${VALID_PILLARS.filter((p) => p !== 'Negative')
+${VALID_PILLARS.filter((p) => p !== 'Negative' && p !== 'Others')
   .map((p) => `- ${p}: ${descriptions[p]}`)
   .join('\n')}`
 
+  const othersCriteria = `- Others: ${descriptions['Others']}`
   const negativeCriteria = `- Negative: ${descriptions['Negative']}`
 
   return `${positivePillars}
+${othersCriteria}
 ${negativeCriteria}`
 }

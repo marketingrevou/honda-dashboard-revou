@@ -147,6 +147,23 @@ async function processBatch(
     byAccount.set(owner, list)
   }
 
+  // Mirror IG CDN avatars into Storage ONCE — an already-mirrored bucket URL is
+  // permanent, so re-downloading + re-uploading it every run is pure overhead
+  // (near-all of the slice) and was a heavy 546 WORKER_LIMIT contributor once
+  // classify moved out. Load the current stored URLs and only mirror accounts
+  // that aren't already bucket-hosted (new account, or still on a CDN URL).
+  const { data: existingRows } = await supabase
+    .from('instagram_accounts')
+    .select('username, profile_picture_url')
+    .in('username', usernames)
+  const storedPic = new Map<string, string | null>(
+    (existingRows ?? []).map((r: { username: string; profile_picture_url: string | null }) => [
+      r.username,
+      r.profile_picture_url,
+    ]),
+  )
+  const bucketMarker = `/storage/v1/object/public/${PROFILE_PIC_BUCKET}/`
+
   // Refresh the profile row from any of the account's posts.
   await Promise.all(
     usernames.map(async (username) => {
@@ -155,7 +172,10 @@ async function processBatch(
         | { full_name?: string; profile_pic_url?: string }
         | undefined
       if (!user) return
-      const profilePicUrl = await storeProfilePic(supabase, username, user.profile_pic_url || null)
+      const alreadyMirrored = (storedPic.get(username) ?? '').includes(bucketMarker)
+      const profilePicUrl = alreadyMirrored
+        ? storedPic.get(username)!
+        : await storeProfilePic(supabase, username, user.profile_pic_url || null)
       await supabase.from('instagram_accounts').upsert(
         {
           username,

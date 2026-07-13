@@ -79,6 +79,23 @@ export function chunkCount(): number {
 }
 
 /**
+ * Load the LIVE scrape-enabled account list from the DB (ordered by username),
+ * the same source of truth the Edge Functions use and that admin add/remove
+ * drives. The hardcoded ACCOUNTS array above is a stale fallback kept for the
+ * chunked-cron callers; the GitHub Actions engine (scripts/update.ts) scrapes
+ * this live list instead so new dealers are picked up without a code change.
+ */
+export async function loadEnabledAccounts(supabase: Supabase): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('instagram_accounts')
+    .select('username')
+    .eq('scrape_enabled', true)
+    .order('username', { ascending: true })
+  if (error) throw new Error(`Failed to load account list: ${error.message}`)
+  return (data ?? []).map((r) => r.username as string)
+}
+
+/**
  * Download an Instagram CDN profile picture and store it in Supabase Storage,
  * returning a stable public URL that never expires. Instagram's signed CDN URLs
  * carry an `oe=` expiry (~7 days), so persisting them directly means avatars go
@@ -120,6 +137,26 @@ function captionText(p: ApifyItem): string {
   const cap = p.caption as { text?: string } | string | null | undefined
   if (typeof cap === 'string') return cap
   return cap?.text ?? ''
+}
+
+type CoauthorProducer = { username?: string }
+
+/**
+ * All Instagram handles a post is attributed to: the primary owner
+ * (`scraped_username`, falling back to the embedded `user.username`) plus every
+ * coauthor in `coauthor_producers` (accepted collaborators on a collab post).
+ * `invited_coauthor_producers` is intentionally NOT included — an invite that
+ * hasn't been accepted shouldn't credit that dealer. Handles are lowercased and
+ * de-duplicated; the caller filters this set down to known dealers before it
+ * creates rows (a non-dealer coauthor would violate the account_username FK).
+ */
+function attributedHandles(p: ApifyItem): string[] {
+  const user = p.user as { username?: string } | undefined
+  const primary = ((p.scraped_username as string) || user?.username || '').toLowerCase()
+  const coauthors = ((p.coauthor_producers as CoauthorProducer[] | undefined) ?? [])
+    .map((c) => (c?.username ?? '').toLowerCase())
+    .filter(Boolean)
+  return [...new Set([primary, ...coauthors].filter(Boolean))]
 }
 
 /**
@@ -164,23 +201,54 @@ async function ingestScrapeItems(
 ): Promise<AccountResult[]> {
   const classify = options.classify ?? true
 
-  // Group fetched posts by the account they belong to. sones tags each post with
-  // the queried handle in `scraped_username` (fall back to the embedded user).
+  // A collab/coauthored post is attributed to its primary owner AND every
+  // coauthor that is one of our dealers (see attributedHandles). So we need the
+  // set of known dealers to fan a post out to — but only to accounts that exist
+  // in instagram_accounts, since account_username is an FK. Load the union of the
+  // queried batch and every handle any fetched post is attributed to, then keep
+  // the ones that actually exist. (Coauthors that aren't dealers, e.g. a sales
+  // rep's personal account, are dropped.)
+  const candidateHandles = new Set<string>(usernames.map((u) => u.toLowerCase()))
+  for (const p of items) for (const h of attributedHandles(p)) candidateHandles.add(h)
+  const { data: dealerRows } = await supabase
+    .from('instagram_accounts')
+    .select('username')
+    .in('username', [...candidateHandles])
+  const knownDealers = new Set<string>((dealerRows ?? []).map((r) => (r.username as string).toLowerCase()))
+
+  // Group fetched posts by the account they belong to, fanning each post out to
+  // every dealer it's attributed to (primary + coauthors). A post can be returned
+  // under more than one queried handle, so dedup per (account, post_id).
   const byAccount = new Map<string, ApifyItem[]>()
+  const seen = new Set<string>() // `${account} ${post_id}`
   for (const p of items) {
-    const user = p.user as { username?: string } | undefined
-    const owner = (p.scraped_username as string) || user?.username || ''
-    if (!owner) continue
-    const list = byAccount.get(owner) ?? []
-    list.push(p)
-    byAccount.set(owner, list)
+    const postId = String(p.pk ?? p.id)
+    for (const handle of attributedHandles(p)) {
+      if (!knownDealers.has(handle)) continue
+      const key = `${handle} ${postId}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const list = byAccount.get(handle) ?? []
+      list.push(p)
+      byAccount.set(handle, list)
+    }
   }
 
   // Refresh the profile row from the owner data embedded in any of its posts.
+  // On a collab post the embedded `user` is whichever coauthor IG treats as the
+  // author, which can be a DIFFERENT dealer (or a partner) than the one this
+  // bucket is keyed on. Only refresh from a post whose `user.username` actually
+  // IS this account — otherwise a collab would overwrite this dealer's name +
+  // avatar with the co-author's.
   await Promise.all(
     usernames.map(async (username) => {
       const posts = byAccount.get(username) ?? []
-      const user = posts[0]?.user as
+      const own = posts.find(
+        (p) =>
+          ((p.user as { username?: string } | undefined)?.username ?? '').toLowerCase() ===
+          username.toLowerCase(),
+      )
+      const user = own?.user as
         | { full_name?: string; profile_pic_url?: string }
         | undefined
       if (!user) return
@@ -254,7 +322,9 @@ async function upsertAccountPosts(
         post_date: postDate(p).toISOString(),
         post_type: getPostType(p.media_type as number, p.product_type as string),
       })),
-      { onConflict: 'post_id' },
+      // Composite key: a post can now exist once per dealer (collab fan-out), so
+      // the conflict target is (post_id, account_username), not post_id alone.
+      { onConflict: 'post_id,account_username' },
     )
 
     // Phase-1 (scrape-only) callers stop here; classification is a separate pass.
@@ -265,6 +335,9 @@ async function upsertAccountPosts(
     // Classify every fetched post that hasn't been classified yet. The `pillar`
     // column defaults to 'Negative', so "has a pillar" is NOT a reliable signal
     // — classification_source IS NULL means it was never actually classified.
+    // A collab post has identical caption/image across its per-dealer rows, so a
+    // single classify keyed by post_id sets every copy at once; treating a post
+    // as done when ANY copy is classified is therefore correct.
     const fetchedIds = posts.map((p) => String(p.pk ?? p.id))
     const { data: classifiedRows } = await supabase
       .from('instagram_posts')
@@ -281,6 +354,7 @@ async function upsertAccountPosts(
           captionText(p),
           (p.image_url as string) || null,
         )
+        // Updates ALL per-dealer rows for this post (collab copies share caption).
         await supabase
           .from('instagram_posts')
           .update({ pillar, classification_source: source })
@@ -361,6 +435,51 @@ export async function runUpdate(
     postsAdded,
     ...(errors.length > 0 && { errors }),
   }
+}
+
+/**
+ * Scrape an EXPLICIT account list in one call, batching the usernames into
+ * CHUNK_SIZE-sized discovery-actor runs. Used by the GitHub Actions engine
+ * (scripts/update.ts), which is not time-capped (6h) so it covers every account
+ * in a single process — no cron cursor. Reuses processBatch, so the actor input,
+ * profile-pic mirroring, upsert, and (optional) classify logic never drift from
+ * the chunked cron path. `onBatch` is an optional progress hook so a caller can
+ * stream per-batch counts into a status row / log.
+ */
+export async function runUpdateForAccounts(
+  supabase: Supabase,
+  accounts: string[],
+  options: {
+    classify?: boolean
+    onBatch?: (info: { batch: number; totalBatches: number; accountsProcessed: number; postsAdded: number }) => void | Promise<void>
+  } = {},
+): Promise<{ accountsProcessed: number; postsAdded: number; errors?: string[] }> {
+  const classify = options.classify ?? false
+  const totalBatches = Math.max(1, Math.ceil(accounts.length / CHUNK_SIZE))
+
+  let accountsProcessed = 0
+  let postsAdded = 0
+  const errors: string[] = []
+
+  for (let batch = 0; batch < totalBatches; batch++) {
+    const slice = accounts.slice(batch * CHUNK_SIZE, batch * CHUNK_SIZE + CHUNK_SIZE)
+    const results = await processBatch(slice, supabase, { classify })
+
+    const batchAccounts = results.filter((r) => !r.error).length
+    const batchPosts = results.reduce((s, r) => s + r.postsAdded, 0)
+    accountsProcessed += batchAccounts
+    postsAdded += batchPosts
+    for (const r of results) if (r.error) errors.push(`${r.username}: ${r.error}`)
+
+    await options.onBatch?.({
+      batch: batch + 1,
+      totalBatches,
+      accountsProcessed: batchAccounts,
+      postsAdded: batchPosts,
+    })
+  }
+
+  return { accountsProcessed, postsAdded, ...(errors.length > 0 && { errors }) }
 }
 
 // ─── Async scrape (Phase 1, for time-capped callers) ─────────────────────────
@@ -461,17 +580,30 @@ export async function classifyUnclassified(
   // the browser loops for full coverage.
   const limit = options.limit ?? 8
 
+  // Over-fetch so that after de-duplicating collab copies (same post_id under
+  // several dealers, one row each, all unclassified) we still have ~limit
+  // distinct posts to classify. One vision call per post_id then updates every
+  // per-dealer copy at once (they share caption + image).
   const { data: rows, error } = await supabase
     .from('instagram_posts')
     .select('post_id, caption, thumbnail_url')
     .is('classification_source', null)
     .gte('post_date', POST_DATE_CUTOFF.toISOString())
     .order('post_date', { ascending: true })
-    .limit(limit)
+    .limit(limit * 4)
 
   if (error) throw new Error(`Failed to read unclassified posts: ${error.message}`)
 
-  const posts = rows ?? []
+  // Dedup by post_id and cap at `limit` distinct posts — keeps concurrency (and
+  // the OpenAI token burst) bounded regardless of how many dealers share a post.
+  const seen = new Set<string>()
+  const posts: { post_id: string; caption: string | null; thumbnail_url: string | null }[] = []
+  for (const r of rows ?? []) {
+    if (seen.has(r.post_id)) continue
+    seen.add(r.post_id)
+    posts.push(r)
+    if (posts.length >= limit) break
+  }
   if (posts.length === 0) {
     return { processed: 0, classified: 0, remaining: 0, done: true }
   }
@@ -483,6 +615,7 @@ export async function classifyUnclassified(
         (p.caption as string) || '',
         (p.thumbnail_url as string) || null,
       )
+      // Updates ALL per-dealer rows for this post (collab copies share caption).
       const { error: upErr } = await supabase
         .from('instagram_posts')
         .update({ pillar, classification_source: source })

@@ -75,7 +75,19 @@ export async function getTopPosts(dateRange: DateRange): Promise<Post[]> {
 
   if (!posts?.length) return []
 
-  const usernames = [...new Set(posts.map((p) => p.account_username))]
+  // A collab post now has one row per attributed dealer (same post_id). The Top
+  // Posts list is an org-wide showcase, so collapse those to a single card per
+  // post_id (keeping the first occurrence) — otherwise a collab shows as
+  // duplicate cards with a duplicate React key. Per-dealer metrics are identical
+  // across the copies, so which one we keep doesn't change the numbers.
+  const seenPost = new Set<string>()
+  const uniquePosts = posts.filter((p) => {
+    if (seenPost.has(p.post_id)) return false
+    seenPost.add(p.post_id)
+    return true
+  })
+
+  const usernames = [...new Set(uniquePosts.map((p) => p.account_username))]
   const { data: accounts } = await supabase
     .from('instagram_accounts')
     .select('username, profile_picture_url')
@@ -83,7 +95,7 @@ export async function getTopPosts(dateRange: DateRange): Promise<Post[]> {
 
   const accountMap = new Map((accounts ?? []).map((a) => [a.username, a]))
 
-  return posts.map((p) => ({
+  return uniquePosts.map((p) => ({
     id: p.post_id,
     accountHandle: `@${p.account_username}`,
     profileImageSrc: accountMap.get(p.account_username)?.profile_picture_url ?? '',

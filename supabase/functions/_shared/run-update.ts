@@ -168,7 +168,17 @@ async function processBatch(
   await Promise.all(
     usernames.map(async (username) => {
       const posts = byAccount.get(username) ?? []
-      const user = posts[0]?.user as
+      // On a collab post the `user` object is whichever co-author IG treats as
+      // the post's author, which can be the OTHER account (e.g. an influencer
+      // partner) even though `scraped_username` correctly buckets it under this
+      // dealer. Only refresh the profile from a post whose `user` actually IS
+      // this account — otherwise we'd overwrite name + avatar with the partner's.
+      const own = posts.find(
+        (p) =>
+          ((p.user as { username?: string } | undefined)?.username ?? '').toLowerCase() ===
+          username.toLowerCase(),
+      )
+      const user = own?.user as
         | { full_name?: string; profile_pic_url?: string }
         | undefined
       if (!user) return
@@ -230,7 +240,12 @@ async function upsertAccountPosts(
         post_date: postDate(p).toISOString(),
         post_type: getPostType(p.media_type as number, p.product_type as string),
       })),
-      { onConflict: 'post_id' },
+      // The post_id UNIQUE constraint was replaced by UNIQUE(post_id,
+      // account_username) so collab posts can be attributed to multiple dealers;
+      // the conflict target must match. (This fallback Edge path does not yet
+      // fan out to coauthors — that lives in the GitHub Actions engine — but it
+      // must still target a valid constraint to upsert at all.)
+      { onConflict: 'post_id,account_username' },
     )
 
     // Scrape-only callers (admin Update Phase 1) stop here; a separate classify

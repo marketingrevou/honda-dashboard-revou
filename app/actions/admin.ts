@@ -283,6 +283,97 @@ export async function classifyChunk(): Promise<ClassifyChunkResult> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GitHub Actions update pipeline.
+//
+// The scrape → refresh → classify pipeline now runs on GitHub Actions (6h
+// timeout, single process) instead of the Supabase Edge Functions, to escape the
+// intermittent HTTP 546 WORKER_LIMIT. triggerUpdate() dispatches the workflow;
+// the run writes its progress into public.update_runs, which getLatestRun() reads
+// so the /admin status panel can poll and show live phases for BOTH the manual
+// dispatch and the Monday schedule.
+//
+// GITHUB_PAT is a fine-grained PAT with Actions: write on the repo, kept
+// server-side (this is a server action) — never shipped to the browser.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// owner/repo of the Actions workflow to dispatch. Overridable via env for forks.
+const GITHUB_REPO = process.env.GITHUB_UPDATE_REPO ?? 'marketingrevou/honda-dashboard-revou'
+const GITHUB_WORKFLOW_FILE = 'update.yml'
+// Branch the workflow runs on. The repo's default branch is `master`.
+const GITHUB_REF = process.env.GITHUB_UPDATE_REF ?? 'master'
+
+/**
+ * Dispatch the "Update Dashboard" GitHub Actions workflow (manual trigger).
+ * Fire-and-forget: GitHub returns 204 with no body, and the run surfaces in
+ * update_runs within seconds once the script's first write lands, which the
+ * status panel polls for. Requires GITHUB_PAT (Actions: write).
+ */
+export async function triggerUpdate(): Promise<ActionResult> {
+  try {
+    await requireAdmin()
+    const pat = process.env.GITHUB_PAT
+    if (!pat) return { ok: false, error: 'GITHUB_PAT is not set' }
+
+    const res = await fetch(
+      `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW_FILE}/dispatches`,
+      {
+        method: 'POST',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${pat}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ ref: GITHUB_REF, inputs: { trigger: 'manual' } }),
+        signal: AbortSignal.timeout(15_000),
+      },
+    )
+    // 204 No Content on success. Anything else carries a JSON error message.
+    if (res.status !== 204) {
+      const body = (await res.json().catch(() => ({}))) as { message?: string }
+      return { ok: false, error: body.message ?? `${res.status} ${res.statusText}` }
+    }
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: String(err instanceof Error ? err.message : err) }
+  }
+}
+
+export interface UpdateRun {
+  id: number
+  trigger: 'manual' | 'schedule'
+  status: 'running' | 'success' | 'failed'
+  phase: string | null
+  accounts_processed: number | null
+  posts_added: number | null
+  posts_classified: number | null
+  log: string | null
+  error: string | null
+  started_at: string
+  finished_at: string | null
+}
+
+/**
+ * Read the newest update_runs row so the /admin panel can render the current (or
+ * last) run — regardless of whether it was triggered manually or by the Monday
+ * schedule. Admin-gated; returns null if no run has ever been recorded.
+ */
+export async function getLatestRun(): Promise<UpdateRun | null> {
+  await requireAdmin()
+  const supabase = makeAuthClient()
+  const { data, error } = await supabase
+    .from('update_runs')
+    .select(
+      'id, trigger, status, phase, accounts_processed, posts_added, posts_classified, log, error, started_at, finished_at',
+    )
+    .order('started_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error(error.message)
+  return (data as UpdateRun | null) ?? null
+}
+
 function isValidPillar(value: string): value is PillarResult {
   return (VALID_PILLARS as readonly string[]).includes(value)
 }

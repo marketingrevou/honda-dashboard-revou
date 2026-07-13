@@ -75,11 +75,22 @@ export async function getTopPosts(dateRange: DateRange): Promise<Post[]> {
 
   if (!posts?.length) return []
 
-  // A collab post now has one row per attributed dealer (same post_id). The Top
-  // Posts list is an org-wide showcase, so collapse those to a single card per
-  // post_id (keeping the first occurrence) — otherwise a collab shows as
-  // duplicate cards with a duplicate React key. Per-dealer metrics are identical
-  // across the copies, so which one we keep doesn't change the numbers.
+  // A collab post now has one row per attributed dealer (same post_id). Build a
+  // post_id → set of dealer handles map from ALL fetched rows first, so we know
+  // which posts are collabs (>1 dealer) and who the co-dealers are. The window
+  // fetch already contains every in-window dealer row (collab copies share
+  // post_date), so this map is complete without a second query.
+  const dealersByPost = new Map<string, Set<string>>()
+  for (const p of posts) {
+    const set = dealersByPost.get(p.post_id) ?? new Set<string>()
+    set.add(p.account_username)
+    dealersByPost.set(p.post_id, set)
+  }
+
+  // The Top Posts list is an org-wide showcase, so collapse a collab's per-dealer
+  // rows to a single card per post_id (keep the first occurrence) — otherwise it
+  // renders as duplicate cards with a duplicate React key. Per-dealer metrics are
+  // identical across the copies, so which one we keep doesn't change the numbers.
   const seenPost = new Set<string>()
   const uniquePosts = posts.filter((p) => {
     if (seenPost.has(p.post_id)) return false
@@ -95,19 +106,27 @@ export async function getTopPosts(dateRange: DateRange): Promise<Post[]> {
 
   const accountMap = new Map((accounts ?? []).map((a) => [a.username, a]))
 
-  return uniquePosts.map((p) => ({
-    id: p.post_id,
-    accountHandle: `@${p.account_username}`,
-    profileImageSrc: accountMap.get(p.account_username)?.profile_picture_url ?? '',
-    date: formatPostDate(p.post_date),
-    likesCount: p.likes_count ?? 0,
-    commentsCount: p.comments_count ?? 0,
-    viewsCount: p.views_count ?? 0,
-    caption: p.caption ?? '',
-    format: typeToFormat(p.post_type),
-    instagramUrl: p.post_url ?? '',
-    pillar: (p.pillar as PillarLabel) ?? 'Negative',
-  }))
+  return uniquePosts.map((p) => {
+    const dealers = dealersByPost.get(p.post_id) ?? new Set([p.account_username])
+    const collabWith = [...dealers]
+      .filter((u) => u !== p.account_username)
+      .map((u) => `@${u}`)
+    return {
+      id: p.post_id,
+      accountHandle: `@${p.account_username}`,
+      profileImageSrc: accountMap.get(p.account_username)?.profile_picture_url ?? '',
+      date: formatPostDate(p.post_date),
+      likesCount: p.likes_count ?? 0,
+      commentsCount: p.comments_count ?? 0,
+      viewsCount: p.views_count ?? 0,
+      caption: p.caption ?? '',
+      format: typeToFormat(p.post_type),
+      instagramUrl: p.post_url ?? '',
+      pillar: (p.pillar as PillarLabel) ?? 'Negative',
+      isCollab: dealers.size > 1,
+      collabWith,
+    }
+  })
 }
 
 export async function getTrendData(dateRange: DateRange): Promise<TrendRawPost[]> {

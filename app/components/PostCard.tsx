@@ -61,6 +61,15 @@ export default function PostCard({ post, rank, sortBy = 'likes', onOpen }: PostC
             <span className="fmt-tag" style={{ background: '#F0F0F0', color: '#555555' }}>
               {post.format}
             </span>
+            {post.isCollab && (
+              <span
+                className="fmt-tag font-semibold"
+                title={post.collabWith.length ? `Collab with ${post.collabWith.join(', ')}` : 'Collab post'}
+                style={{ background: '#EDE9FE', color: '#6D28D9' }}
+              >
+                Collab
+              </span>
+            )}
           </div>
           <span
             className="font-mulish font-semibold self-start"

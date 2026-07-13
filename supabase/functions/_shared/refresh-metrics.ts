@@ -66,9 +66,13 @@ async function refreshBatch(
   const withUrl = rows.filter((r) => r.post_url)
   if (withUrl.length === 0) return { updated: 0, errors: [] }
 
+  // Collab posts share a post_url across their per-dealer rows; the refresh actor
+  // rejects duplicate directUrls, so send each URL once (applyMetricUpdates maps
+  // results back by post_id and updates every matching row).
+  const uniqueUrls = [...new Set(withUrl.map((r) => r.post_url as string))]
   const client = makeApify()
   const items = await runActor(client, REFRESH_ACTOR, {
-    directUrls: withUrl.map((r) => r.post_url as string),
+    directUrls: uniqueUrls,
     resultsType: 'posts',
     resultsLimit: 1,
     addParentData: false,

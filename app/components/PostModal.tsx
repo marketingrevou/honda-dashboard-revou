@@ -79,6 +79,15 @@ export default function PostModal({ post, onClose }: PostModalProps) {
           <div className="font-mulish font-semibold" style={{ fontSize: '11px', color: '#111827' }}>
             {post.accountHandle}
           </div>
+          {post.isCollab && (
+            <span
+              className="font-mulish font-semibold"
+              title={post.collabWith.length ? `Collab with ${post.collabWith.join(', ')}` : 'Collab post'}
+              style={{ fontSize: '9px', color: '#6D28D9', background: '#EDE9FE', padding: '2px 7px', borderRadius: 4, whiteSpace: 'nowrap' }}
+            >
+              Collab
+            </span>
+          )}
           <span style={{ fontSize: '10px', color: '#9CA3AF' }}>{post.date}</span>
           <button
             onClick={onClose}

@@ -1,0 +1,46 @@
+name: Update Dashboard
+
+# Runs the scrape → refresh → classify pipeline on GitHub Actions instead of the
+# Supabase Edge Functions (which hit the intermittent HTTP 546 WORKER_LIMIT).
+# 6h timeout, single process — no chunk cursor, no 546. Results are written INTO
+# Supabase via the service-role key. Both triggers write the same update_runs
+# table, so the /admin status panel reflects manual and scheduled runs alike.
+on:
+  workflow_dispatch: # manual trigger (from the /admin button's API call, or the GitHub UI)
+    inputs:
+      trigger:
+        description: How the run was started (recorded in update_runs.trigger)
+        default: manual
+  schedule:
+    - cron: '0 1 * * 1' # every Monday 01:00 UTC (= 08:00 WIB)
+
+# Never let two runs write the DB at once (manual click during the Monday run).
+concurrency:
+  group: update-dashboard
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Run update pipeline
+        run: npx tsx scripts/update.ts
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+          # Optional failover: if APIFY_TOKEN hits its monthly hard limit, the run
+          # retries the actor call on this second Apify account's token.
+          APIFY_TOKEN_2: ${{ secrets.APIFY_TOKEN_2 }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+          NEXT_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # workflow_dispatch → the input; schedule → no input, so default to 'schedule'.
+          TRIGGER: ${{ github.event.inputs.trigger || 'schedule' }}
+          GITHUB_RUN_ID: ${{ github.run_id }}

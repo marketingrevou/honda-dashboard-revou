@@ -48,9 +48,16 @@ async function refreshBatch(
   const withUrl = rows.filter((r) => r.post_url)
   if (withUrl.length === 0) return { updated: 0, errors: [] }
 
-  const client = makeApify()
-  const items = await runActor(client, REFRESH_ACTOR, {
-    directUrls: withUrl.map((r) => r.post_url as string),
+  // A collab post has one row per dealer, all sharing the same post_url, so a
+  // slice can contain that URL more than once — and the refresh actor rejects
+  // `directUrls` with duplicates. Send each URL once; applyMetricUpdates maps the
+  // result back by post_id and updates every matching row (all collab copies).
+  const uniqueUrls = [...new Set(withUrl.map((r) => r.post_url as string))]
+
+  // No explicit client → runActor fails over across APIFY_TOKEN, APIFY_TOKEN_2…
+  // on a monthly-hard-limit error.
+  const items = await runActor(REFRESH_ACTOR, {
+    directUrls: uniqueUrls,
     resultsType: 'posts',
     resultsLimit: 1,
     addParentData: false,
@@ -211,9 +218,12 @@ export async function startRefresh(
     return { runId: null, datasetId: null, rows }
   }
 
+  // Dedup URLs — collab posts share a post_url across their per-dealer rows, and
+  // the actor rejects duplicate directUrls (ingest still maps back by post_id).
+  const uniqueUrls = [...new Set(withUrl.map((r) => r.post_url as string))]
   const client = makeApify()
   const { runId, datasetId } = await startActor(client, REFRESH_ACTOR, {
-    directUrls: withUrl.map((r) => r.post_url as string),
+    directUrls: uniqueUrls,
     resultsType: 'posts',
     resultsLimit: 1,
     addParentData: false,

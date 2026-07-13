@@ -12,6 +12,12 @@ export interface Post {
   format: PostFormat
   instagramUrl: string
   pillar: PillarLabel
+  // Collab (coauthored) post: the same IG post is attributed to more than one
+  // dealer. `isCollab` is true when >1 dealer has this post_id; `collabWith`
+  // lists the OTHER dealer handles (without the one shown on this card),
+  // '@'-prefixed for display.
+  isCollab: boolean
+  collabWith: string[]
 }
 
 export interface Idea {

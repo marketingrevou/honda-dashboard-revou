@@ -3,7 +3,7 @@
 // one actor run. Never touches pillar/classification/caption.
 
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2'
-import { makeApify, runActor, REFRESH_ACTOR, type ApifyItem } from './apify.ts'
+import { runActor, REFRESH_ACTOR, type ApifyItem } from './apify.ts'
 
 /**
  * Posts refreshed per invocation. apify/instagram-api-scraper takes a batch of
@@ -66,9 +66,13 @@ async function refreshBatch(
   const withUrl = rows.filter((r) => r.post_url)
   if (withUrl.length === 0) return { updated: 0, errors: [] }
 
-  const client = makeApify()
-  const items = await runActor(client, REFRESH_ACTOR, {
-    directUrls: withUrl.map((r) => r.post_url as string),
+  // Collab posts share a post_url across their per-dealer rows; the refresh actor
+  // rejects duplicate directUrls, so send each URL once (applyMetricUpdates maps
+  // results back by post_id and updates every matching row).
+  const uniqueUrls = [...new Set(withUrl.map((r) => r.post_url as string))]
+  // No explicit client → runActor fails over across APIFY_TOKEN, APIFY_TOKEN_2…
+  const items = await runActor(REFRESH_ACTOR, {
+    directUrls: uniqueUrls,
     resultsType: 'posts',
     resultsLimit: 1,
     addParentData: false,

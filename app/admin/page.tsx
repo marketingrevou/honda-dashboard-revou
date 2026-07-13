@@ -6,7 +6,7 @@ import { VALID_PILLARS, PILLAR_DESCRIPTIONS_FALLBACK } from '@/lib/pillar-config
 import { logout } from '@/app/actions/auth'
 import PillarConfigEditor from '@/app/components/admin/PillarConfigEditor'
 import AccountEditor, { type AccountRow } from '@/app/components/admin/AccountEditor'
-import UpdateRunner from '@/app/components/admin/UpdateRunner'
+import UpdateStatus from '@/app/components/admin/UpdateStatus'
 
 function AdminHeader() {
   return (
@@ -60,7 +60,7 @@ async function AdminContent() {
 
   return (
     <>
-      <UpdateRunner />
+      <UpdateStatus />
       <PillarConfigEditor rows={pillars} />
       <AccountEditor accounts={accounts} />
     </>

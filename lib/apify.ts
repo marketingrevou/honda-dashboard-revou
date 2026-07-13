@@ -17,8 +17,39 @@ import { ApifyClient } from 'apify-client'
 export const REFRESH_ACTOR = 'apify/instagram-api-scraper'
 export const DISCOVERY_ACTOR = 'sones/instagram-posts-scraper-lowcost'
 
-export function makeApify() {
-  return new ApifyClient({ token: process.env.APIFY_TOKEN })
+/**
+ * The Apify API tokens to use, in priority order: APIFY_TOKEN first, then
+ * APIFY_TOKEN_2, APIFY_TOKEN_3, … Blank/unset ones are skipped. Multiple tokens
+ * let a run fail over to a second account when the first hits its Apify MONTHLY
+ * USAGE HARD LIMIT (see runActor / isQuotaExhaustedError).
+ */
+export function apifyTokens(): string[] {
+  const tokens = [
+    process.env.APIFY_TOKEN,
+    process.env.APIFY_TOKEN_2,
+    process.env.APIFY_TOKEN_3,
+  ].filter((t): t is string => !!t && t.trim().length > 0)
+  return tokens
+}
+
+export function makeApify(token?: string) {
+  return new ApifyClient({ token: token ?? process.env.APIFY_TOKEN })
+}
+
+/**
+ * True when an Apify error is the account's monthly usage hard limit (not a
+ * transient failure). That message means retrying on the SAME token is futile —
+ * the only recovery is a different account's token. Matched loosely because the
+ * exact wording varies ("Monthly usage hard limit exceeded", plan-limit variants).
+ */
+export function isQuotaExhaustedError(err: unknown): boolean {
+  const msg = String(err instanceof Error ? err.message : err).toLowerCase()
+  return (
+    msg.includes('monthly usage hard limit') ||
+    msg.includes('usage hard limit exceeded') ||
+    (msg.includes('hard limit') && msg.includes('exceed')) ||
+    msg.includes('upgrade your subscription')
+  )
 }
 
 export type ApifyItem = Record<string, unknown>
@@ -41,15 +72,56 @@ function isDemoRow(it: ApifyItem): boolean {
  *
  * This BLOCKS until the actor run finishes — fine for the cron (300s budget),
  * but on a 60s-capped plan use the async start/poll/fetch trio below instead.
+ *
+ * Token failover: `client` is optional. When omitted, the run is attempted with
+ * each token from apifyTokens() in order, advancing to the next ONLY on a
+ * monthly-usage-hard-limit error (isQuotaExhaustedError) — so a second Apify
+ * account picks up where the first ran out of quota. Any other error is thrown
+ * immediately (retrying it on another token would be pointless). Passing an
+ * explicit `client` keeps the old single-token behaviour (used by the async
+ * start/poll/fetch path, where the run lives on one specific account).
  */
 export async function runActor(
-  client: ApifyClient,
-  actorId: string,
-  input: Record<string, unknown>,
+  clientOrActorId: ApifyClient | string,
+  actorIdOrInput: string | Record<string, unknown>,
+  maybeInput?: Record<string, unknown>,
 ): Promise<ApifyItem[]> {
-  const run = await client.actor(actorId).call(input)
-  const { items } = await client.dataset(run.defaultDatasetId).listItems()
-  return (items as ApifyItem[]).filter((it) => !isDemoRow(it))
+  // Overload A (explicit client): runActor(client, actorId, input)
+  if (typeof clientOrActorId !== 'string') {
+    const client = clientOrActorId
+    const actorId = actorIdOrInput as string
+    const input = maybeInput as Record<string, unknown>
+    const run = await client.actor(actorId).call(input)
+    const { items } = await client.dataset(run.defaultDatasetId).listItems()
+    return (items as ApifyItem[]).filter((it) => !isDemoRow(it))
+  }
+
+  // Overload B (token failover): runActor(actorId, input)
+  const actorId = clientOrActorId
+  const input = actorIdOrInput as Record<string, unknown>
+  const tokens = apifyTokens()
+  if (tokens.length === 0) throw new Error('No Apify token configured (APIFY_TOKEN)')
+
+  let lastErr: unknown
+  for (let i = 0; i < tokens.length; i++) {
+    const client = makeApify(tokens[i])
+    try {
+      const run = await client.actor(actorId).call(input)
+      const { items } = await client.dataset(run.defaultDatasetId).listItems()
+      return (items as ApifyItem[]).filter((it) => !isDemoRow(it))
+    } catch (err) {
+      lastErr = err
+      // Only fail over on a hard-limit exhaustion; any other error is real.
+      if (i < tokens.length - 1 && isQuotaExhaustedError(err)) {
+        console.warn(
+          `[apify] token #${i + 1} hit monthly hard limit — failing over to token #${i + 2}`,
+        )
+        continue
+      }
+      throw err
+    }
+  }
+  throw lastErr
 }
 
 // ─── Async run lifecycle (for time-capped callers, e.g. the admin UI) ────────

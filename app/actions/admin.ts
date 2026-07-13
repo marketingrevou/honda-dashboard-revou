@@ -123,7 +123,7 @@ function edgeFunctionBase(): string {
 
 /** POST one Edge Function invocation with the CRON_SECRET bearer. */
 async function invokeEdgeFunction(
-  fn: 'scrape' | 'refresh-metrics',
+  fn: 'scrape' | 'refresh-metrics' | 'classify',
   query: string,
 ): Promise<Record<string, unknown>> {
   const secret = process.env.CRON_SECRET
@@ -178,10 +178,22 @@ export type RefreshChunkResult =
     }
   | { ok: false; error: string }
 
+export type ClassifyChunkResult =
+  | {
+      ok: true
+      processed: number
+      classified: number
+      remaining: number
+      done: boolean
+      errors?: string[]
+    }
+  | { ok: false; error: string }
+
 /**
- * Scrape ONE account chunk on Supabase via the `scrape` Edge Function (upsert +
- * classify). `?chunk=` override keeps the weekly cron cursor untouched. Returns
- * `done` when this was the last chunk so the client can stop looping.
+ * Scrape ONE account chunk on Supabase via the `scrape` Edge Function
+ * (scrape-only upsert; classification is a separate Phase 3 pass — classifyChunk).
+ * `?chunk=` override keeps the weekly cron cursor untouched. Returns `done` when
+ * this was the last chunk so the client can stop looping.
  */
 export async function scrapeChunk(chunk: number): Promise<ScrapeChunkResult> {
   try {
@@ -234,6 +246,35 @@ export async function refreshChunk(offset: number): Promise<RefreshChunkResult> 
       processed: (r.processed as number) ?? 0,
       updated: (r.updated as number) ?? 0,
       nextOffset,
+      done,
+      errors: r.errors as string[] | undefined,
+    }
+  } catch (err) {
+    return { ok: false, error: String(err instanceof Error ? err.message : err) }
+  }
+}
+
+/**
+ * Classify ONE bounded batch of newly-scraped (unclassified) posts on Supabase
+ * via the `classify` Edge Function. Run as Phase 3 of the admin Update, after
+ * scrape (Phase 1) and refresh-metrics (Phase 2). The client loops until `done`.
+ * Each batch is kept small so the image-fetch + vision work stays under the
+ * worker limit.
+ */
+export async function classifyChunk(): Promise<ClassifyChunkResult> {
+  try {
+    await requireAdmin()
+    const r = await invokeEdgeFunction('classify', '')
+    const done = (r.done as boolean) ?? true
+    if ((r.classified as number) > 0) {
+      revalidatePath('/dashboard')
+      revalidatePath('/admin')
+    }
+    return {
+      ok: true,
+      processed: (r.processed as number) ?? 0,
+      classified: (r.classified as number) ?? 0,
+      remaining: (r.remaining as number) ?? 0,
       done,
       errors: r.errors as string[] | undefined,
     }

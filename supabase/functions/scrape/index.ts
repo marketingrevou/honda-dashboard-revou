@@ -52,7 +52,13 @@ Deno.serve(async (req) => {
   }
 
   const offset = chunk * CHUNK_SIZE
-  const result = await runUpdate(supabase, { offset, limit: CHUNK_SIZE })
+  // Scrape-only by default: both the weekly cron and the admin Update classify in
+  // a separate pass (the `classify` Edge Function, run after refresh-metrics), so
+  // no vision calls share this worker's budget — that inline classify was the
+  // 546 WORKER_LIMIT driver on heavy chunks. `?classify=true` restores the old
+  // inline behaviour if a one-off caller wants it.
+  const classify = new URL(req.url).searchParams.get('classify') === 'true'
+  const result = await runUpdate(supabase, { offset, limit: CHUNK_SIZE, classify })
 
   // Advance the cursor (wrapping) only for cursor-driven runs.
   if (override === null) {

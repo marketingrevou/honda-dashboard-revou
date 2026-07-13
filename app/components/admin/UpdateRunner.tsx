@@ -2,7 +2,7 @@
 
 import { useRef, useState } from 'react'
 import { Button, Card } from './ui'
-import { scrapeChunk, refreshChunk, sendRunNotification } from '@/app/actions/admin'
+import { scrapeChunk, refreshChunk, classifyChunk, sendRunNotification } from '@/app/actions/admin'
 
 type LogLine = { text: string; kind: 'info' | 'phase' | 'ok' | 'error' }
 
@@ -69,7 +69,7 @@ export default function UpdateRunner() {
 
   async function runUpdate() {
     if (activeRef.current) return
-    if (!window.confirm('Run full Update on Supabase? This scrapes Instagram, classifies new posts, and refreshes metrics via the Supabase Edge Functions — it uses Apify and OpenAI credits and can take ~15 minutes. Keep this tab open.')) {
+    if (!window.confirm('Run full Update on Supabase? This scrapes Instagram, refreshes metrics, then classifies new posts via the Supabase Edge Functions — it uses Apify and OpenAI credits and can take ~15 minutes. Keep this tab open.')) {
       return
     }
     activeRef.current = true
@@ -77,16 +77,15 @@ export default function UpdateRunner() {
     resetLog()
 
     try {
-      // ── Phase 1: scrape + classify all account chunks (Supabase `scrape`) ──
-      // Each chunk upserts AND classifies its own posts in one Edge Function
-      // call, so there's no separate classify phase. The client loops chunks so
-      // no single call runs longer than one chunk (~96s).
-      log('Phase 1 — Scraping + classifying latest posts (Supabase)…', 'phase')
+      // ── Phase 1: scrape latest posts, all account chunks (Supabase `scrape`) ─
+      // Scrape-only — each chunk upserts its posts but does NOT classify. The
+      // client loops chunks so no single call runs longer than one chunk (~96s).
+      log('Phase 1 — Scraping latest posts (Supabase)…', 'phase')
       for (let chunk = 0; ; chunk++) {
         const r = await scrapeChunk(chunk)
         if (!r.ok) throw new Error(r.error)
         log(
-          `  Chunk ${r.chunk + 1}/${r.totalChunks}: ${r.accountsProcessed} accounts, ${r.postsAdded} posts scraped + classified`,
+          `  Chunk ${r.chunk + 1}/${r.totalChunks}: ${r.accountsProcessed} accounts, ${r.postsAdded} posts scraped`,
           'ok',
         )
         if (r.errors?.length) {
@@ -116,8 +115,32 @@ export default function UpdateRunner() {
         offset = r.nextOffset
       }
 
-      log('Update complete ✓', 'phase')
-      await notify('Update', 'success', 'The full Update pipeline (scrape + classify + refresh metrics) finished successfully.')
+      // ── Phase 3: classify the newly-scraped posts (Supabase `classify`) ──────
+      // Classifies posts left unclassified by Phase 1, in bounded batches. The
+      // client loops until `done` so each Edge Function call stays under the
+      // worker limit (the image + vision work is the expensive part).
+      log('Phase 3 — Classifying new posts (Supabase)…', 'phase')
+      let totalClassified = 0
+      for (;;) {
+        const r = await classifyChunk()
+        if (!r.ok) throw new Error(r.error)
+        if (r.processed === 0) {
+          log('  Nothing to classify (0 new posts)', 'ok')
+          break
+        }
+        totalClassified += r.classified
+        log(
+          `  Classified ${r.classified}/${r.processed} (${r.remaining} remaining)`,
+          'ok',
+        )
+        if (r.errors?.length) {
+          log(`    ${r.errors.length} post note(s) — first: ${r.errors[0]}`, 'error')
+        }
+        if (r.done) break
+      }
+
+      log(`Update complete ✓ (${totalClassified} posts classified)`, 'phase')
+      await notify('Update', 'success', `The full Update pipeline (scrape → refresh metrics → classify) finished successfully. ${totalClassified} posts classified.`)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       log(`Failed: ${msg}`, 'error')
@@ -163,7 +186,7 @@ export default function UpdateRunner() {
   return (
     <Card
       title="Data Pipelines"
-      description="Update runs on Supabase: scrapes Instagram + classifies new posts → refreshes metrics. Also runs automatically every Monday. Reclassify re-checks posts marked Negative."
+      description="Update runs on Supabase: scrapes Instagram → refreshes metrics → classifies new posts. Also runs automatically every Monday. Reclassify re-checks posts marked Negative."
     >
       <div className="flex items-center gap-3" style={{ marginBottom: lines.length ? '16px' : 0, flexWrap: 'wrap' }}>
         <Button onClick={runUpdate} disabled={running}>

@@ -54,8 +54,9 @@ async function refreshBatch(
   // result back by post_id and updates every matching row (all collab copies).
   const uniqueUrls = [...new Set(withUrl.map((r) => r.post_url as string))]
 
-  const client = makeApify()
-  const items = await runActor(client, REFRESH_ACTOR, {
+  // No explicit client → runActor fails over across APIFY_TOKEN, APIFY_TOKEN_2…
+  // on a monthly-hard-limit error.
+  const items = await runActor(REFRESH_ACTOR, {
     directUrls: uniqueUrls,
     resultsType: 'posts',
     resultsLimit: 1,

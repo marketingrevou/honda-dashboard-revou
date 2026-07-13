@@ -14,8 +14,28 @@ import { ApifyClient } from 'npm:apify-client@2'
 export const REFRESH_ACTOR = 'apify/instagram-api-scraper'
 export const DISCOVERY_ACTOR = 'sones/instagram-posts-scraper-lowcost'
 
-export function makeApify() {
-  return new ApifyClient({ token: Deno.env.get('APIFY_TOKEN') })
+/** Apify tokens in priority order (APIFY_TOKEN, APIFY_TOKEN_2, …); blanks skipped. */
+export function apifyTokens(): string[] {
+  return [
+    Deno.env.get('APIFY_TOKEN'),
+    Deno.env.get('APIFY_TOKEN_2'),
+    Deno.env.get('APIFY_TOKEN_3'),
+  ].filter((t): t is string => !!t && t.trim().length > 0)
+}
+
+export function makeApify(token?: string) {
+  return new ApifyClient({ token: token ?? Deno.env.get('APIFY_TOKEN') })
+}
+
+/** True when an Apify error is the account's monthly usage hard limit. */
+export function isQuotaExhaustedError(err: unknown): boolean {
+  const msg = String(err instanceof Error ? err.message : err).toLowerCase()
+  return (
+    msg.includes('monthly usage hard limit') ||
+    msg.includes('usage hard limit exceeded') ||
+    (msg.includes('hard limit') && msg.includes('exceed')) ||
+    msg.includes('upgrade your subscription')
+  )
 }
 
 export type ApifyItem = Record<string, unknown>
@@ -38,11 +58,42 @@ function isDemoRow(it: ApifyItem): boolean {
  * is idle I/O, not CPU, so it stays within the Edge Function CPU budget.
  */
 export async function runActor(
-  client: ApifyClient,
-  actorId: string,
-  input: Record<string, unknown>,
+  clientOrActorId: ApifyClient | string,
+  actorIdOrInput: string | Record<string, unknown>,
+  maybeInput?: Record<string, unknown>,
 ): Promise<ApifyItem[]> {
-  const run = await client.actor(actorId).call(input)
-  const { items } = await client.dataset(run.defaultDatasetId).listItems()
-  return (items as ApifyItem[]).filter((it) => !isDemoRow(it))
+  // Overload A (explicit client): runActor(client, actorId, input)
+  if (typeof clientOrActorId !== 'string') {
+    const client = clientOrActorId
+    const actorId = actorIdOrInput as string
+    const input = maybeInput as Record<string, unknown>
+    const run = await client.actor(actorId).call(input)
+    const { items } = await client.dataset(run.defaultDatasetId).listItems()
+    return (items as ApifyItem[]).filter((it) => !isDemoRow(it))
+  }
+
+  // Overload B (token failover): runActor(actorId, input) — advance to the next
+  // token only on a monthly-hard-limit error, so a second account picks up.
+  const actorId = clientOrActorId
+  const input = actorIdOrInput as Record<string, unknown>
+  const tokens = apifyTokens()
+  if (tokens.length === 0) throw new Error('No Apify token configured (APIFY_TOKEN)')
+
+  let lastErr: unknown
+  for (let i = 0; i < tokens.length; i++) {
+    const client = makeApify(tokens[i])
+    try {
+      const run = await client.actor(actorId).call(input)
+      const { items } = await client.dataset(run.defaultDatasetId).listItems()
+      return (items as ApifyItem[]).filter((it) => !isDemoRow(it))
+    } catch (err) {
+      lastErr = err
+      if (i < tokens.length - 1 && isQuotaExhaustedError(err)) {
+        console.warn(`[apify] token #${i + 1} hit monthly hard limit — failing over to token #${i + 2}`)
+        continue
+      }
+      throw err
+    }
+  }
+  throw lastErr
 }

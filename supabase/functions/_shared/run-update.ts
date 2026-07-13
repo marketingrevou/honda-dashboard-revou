@@ -7,7 +7,6 @@
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2'
 import { classifyPillar } from './classify-pillar.ts'
 import {
-  makeApify,
   runActor,
   getPostType,
   DISCOVERY_ACTOR,
@@ -124,11 +123,10 @@ async function processBatch(
   supabase: SupabaseClient,
   options: { classify?: boolean } = {},
 ): Promise<AccountResult[]> {
-  const client = makeApify()
-
   let items: ApifyItem[]
   try {
-    items = await runActor(client, DISCOVERY_ACTOR, {
+    // No explicit client → runActor fails over across APIFY_TOKEN, APIFY_TOKEN_2…
+    items = await runActor(DISCOVERY_ACTOR, {
       usernames,
       resultsLimit: POSTS_PER_ACCOUNT,
     })

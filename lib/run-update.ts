@@ -172,11 +172,11 @@ async function processBatch(
   supabase: Supabase,
   options: { classify?: boolean } = {},
 ): Promise<AccountResult[]> {
-  const client = makeApify()
-
   let items: ApifyItem[]
   try {
-    items = await runActor(client, DISCOVERY_ACTOR, {
+    // No explicit client → runActor fails over across APIFY_TOKEN, APIFY_TOKEN_2…
+    // on a monthly-hard-limit error, so scraping continues on a second account.
+    items = await runActor(DISCOVERY_ACTOR, {
       usernames,
       resultsLimit: POSTS_PER_ACCOUNT,
     })

@@ -49,21 +49,54 @@ async function refreshBatch(
   if (withUrl.length === 0) return { updated: 0, errors: [] }
 
   // A collab post has one row per dealer, all sharing the same post_url, so a
-  // slice can contain that URL more than once — and the refresh actor rejects
-  // `directUrls` with duplicates. Send each URL once; applyMetricUpdates maps the
-  // result back by post_id and updates every matching row (all collab copies).
+  // slice can contain that URL more than once — and actors reject duplicate URLs.
+  // Send each URL once; applyMetricUpdates maps the result back to every matching
+  // row (all collab copies).
   const uniqueUrls = [...new Set(withUrl.map((r) => r.post_url as string))]
 
   // No explicit client → runActor fails over across APIFY_TOKEN, APIFY_TOKEN_2…
-  // on a monthly-hard-limit error.
-  const items = await runActor(REFRESH_ACTOR, {
-    directUrls: uniqueUrls,
-    resultsType: 'posts',
-    resultsLimit: 1,
-    addParentData: false,
-  })
+  // on a monthly-hard-limit error. clappi takes a `postUrls` array.
+  const items = await runActor(REFRESH_ACTOR, { postUrls: uniqueUrls })
 
   return applyMetricUpdates(items, withUrl, supabase)
+}
+
+/** Instagram shortcode from a /p/, /reel/, or /tv/ URL, else null. */
+function shortcodeOf(url: string | null): string | null {
+  if (!url) return null
+  const m = url.match(/\/(?:p|reel|tv)\/([^/?#]+)/)
+  return m ? m[1] : null
+}
+
+/**
+ * Normalise a metrics item from the refresh actor to our columns. Written for
+ * clappi/instagram-posts-scraper (mediaId/likes/comments/views/thumbnailUrl) but
+ * also reads the old apify/instagram-api-scraper field names (id/likesCount/…),
+ * so a mixed or reverted dataset still maps. Returns the media id + shortcode it
+ * can be matched by, and the metric patch.
+ */
+function mapMetrics(it: ApifyItem): {
+  mediaId: string | null
+  shortcode: string | null
+  patch: Record<string, number | string>
+} {
+  const mediaId =
+    it.mediaId != null ? String(it.mediaId) : it.id != null ? String(it.id) : null
+  const shortcode =
+    (it.shortcode as string) ?? (it.shortCode as string) ?? (it.code as string) ?? null
+
+  const patch: Record<string, number | string> = {}
+  const likes = (it.likes as number) ?? (it.likesCount as number)
+  if (typeof likes === 'number') patch.likes_count = likes
+  const comments = (it.comments as number) ?? (it.commentsCount as number)
+  if (typeof comments === 'number') patch.comments_count = comments
+  const views =
+    (it.views as number) ?? (it.videoViewCount as number) ?? (it.videoPlayCount as number)
+  if (typeof views === 'number') patch.views_count = views
+  const thumb = (it.thumbnailUrl as string) ?? (it.displayUrl as string)
+  if (typeof thumb === 'string' && thumb) patch.thumbnail_url = thumb
+
+  return { mediaId, shortcode, patch }
 }
 
 /**
@@ -77,34 +110,31 @@ async function applyMetricUpdates(
   rows: PostRow[],
   supabase: Supabase,
 ): Promise<{ updated: number; errors: string[] }> {
-  // Index fetched results by the Instagram media id, which equals our post_id.
-  const byId = new Map<string, ApifyItem>()
+  // Index fetched results by media id AND by shortcode, so a row matches whether
+  // or not its post_id carries a collab `_ownerid` suffix (the actor returns the
+  // bare media id) — the URL shortcode is the reliable secondary key.
+  const byId = new Map<string, Record<string, number | string>>()
+  const byCode = new Map<string, Record<string, number | string>>()
   for (const it of items) {
-    const id = it.id !== undefined ? String(it.id) : ''
-    if (id) byId.set(id, it)
+    const { mediaId, shortcode, patch } = mapMetrics(it)
+    if (Object.keys(patch).length === 0) continue
+    if (mediaId) byId.set(mediaId, patch)
+    if (shortcode) byCode.set(shortcode, patch)
   }
 
   let updated = 0
   const errors: string[] = []
   await Promise.all(
     rows.map(async (row) => {
-      const it = byId.get(row.post_id)
-      if (!it) {
+      // Match by bare media id (strip any collab suffix) or by URL shortcode.
+      const bareId = row.post_id.split('_')[0]
+      const patch = byId.get(bareId) ?? byId.get(row.post_id) ?? byCode.get(shortcodeOf(row.post_url) ?? '')
+      if (!patch) {
         errors.push(`${row.post_id}: not returned`)
         return
       }
-      const patch: Record<string, number | string> = {}
-      if (typeof it.likesCount === 'number') patch.likes_count = it.likesCount
-      if (typeof it.commentsCount === 'number') patch.comments_count = it.commentsCount
-      const views = (it.videoViewCount as number) ?? (it.videoPlayCount as number)
-      if (typeof views === 'number') patch.views_count = views
-      if (typeof it.displayUrl === 'string' && it.displayUrl) {
-        patch.thumbnail_url = it.displayUrl
-      }
-      if (Object.keys(patch).length === 0) {
-        errors.push(`${row.post_id}: no metrics in payload`)
-        return
-      }
+      // Update by the FULL post_id (collab copies share it) so every dealer row
+      // for this post gets the same fresh metrics.
       const { error } = await supabase
         .from('instagram_posts')
         .update(patch)
@@ -219,14 +249,11 @@ export async function startRefresh(
   }
 
   // Dedup URLs — collab posts share a post_url across their per-dealer rows, and
-  // the actor rejects duplicate directUrls (ingest still maps back by post_id).
+  // actors reject duplicate URLs (ingest still maps results back to every row).
   const uniqueUrls = [...new Set(withUrl.map((r) => r.post_url as string))]
   const client = makeApify()
   const { runId, datasetId } = await startActor(client, REFRESH_ACTOR, {
-    directUrls: uniqueUrls,
-    resultsType: 'posts',
-    resultsLimit: 1,
-    addParentData: false,
+    postUrls: uniqueUrls,
   })
   return { runId, datasetId, rows }
 }

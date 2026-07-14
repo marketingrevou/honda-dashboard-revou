@@ -18,36 +18,60 @@ export const REFRESH_WINDOW_DAYS = 14
 
 type PostRow = { post_id: string; post_url: string | null }
 
+/** Instagram shortcode from a /p/, /reel/, or /tv/ URL, else null. */
+function shortcodeOf(url: string | null): string | null {
+  if (!url) return null
+  const m = url.match(/\/(?:p|reel|tv)\/([^/?#]+)/)
+  return m ? m[1] : null
+}
+
+/** Normalise a clappi metrics item (also tolerates the old actor's field names). */
+function mapMetrics(it: ApifyItem): {
+  mediaId: string | null
+  shortcode: string | null
+  patch: Record<string, number | string>
+} {
+  const mediaId =
+    it.mediaId != null ? String(it.mediaId) : it.id != null ? String(it.id) : null
+  const shortcode =
+    (it.shortcode as string) ?? (it.shortCode as string) ?? (it.code as string) ?? null
+
+  const patch: Record<string, number | string> = {}
+  const likes = (it.likes as number) ?? (it.likesCount as number)
+  if (typeof likes === 'number') patch.likes_count = likes
+  const comments = (it.comments as number) ?? (it.commentsCount as number)
+  if (typeof comments === 'number') patch.comments_count = comments
+  const views =
+    (it.views as number) ?? (it.videoViewCount as number) ?? (it.videoPlayCount as number)
+  if (typeof views === 'number') patch.views_count = views
+  const thumb = (it.thumbnailUrl as string) ?? (it.displayUrl as string)
+  if (typeof thumb === 'string' && thumb) patch.thumbnail_url = thumb
+
+  return { mediaId, shortcode, patch }
+}
+
 async function applyMetricUpdates(
   items: ApifyItem[],
   rows: PostRow[],
   supabase: SupabaseClient,
 ): Promise<{ updated: number; errors: string[] }> {
-  const byId = new Map<string, ApifyItem>()
+  const byId = new Map<string, Record<string, number | string>>()
+  const byCode = new Map<string, Record<string, number | string>>()
   for (const it of items) {
-    const id = it.id !== undefined ? String(it.id) : ''
-    if (id) byId.set(id, it)
+    const { mediaId, shortcode, patch } = mapMetrics(it)
+    if (Object.keys(patch).length === 0) continue
+    if (mediaId) byId.set(mediaId, patch)
+    if (shortcode) byCode.set(shortcode, patch)
   }
 
   let updated = 0
   const errors: string[] = []
   await Promise.all(
     rows.map(async (row) => {
-      const it = byId.get(row.post_id)
-      if (!it) {
+      const bareId = row.post_id.split('_')[0]
+      const patch = byId.get(bareId) ?? byId.get(row.post_id) ?? byCode.get(shortcodeOf(row.post_url) ?? '')
+      if (!patch) {
         errors.push(`${row.post_id}: not returned`)
-        return
-      }
-      const patch: Record<string, number | string> = {}
-      if (typeof it.likesCount === 'number') patch.likes_count = it.likesCount
-      if (typeof it.commentsCount === 'number') patch.comments_count = it.commentsCount
-      const views = (it.videoViewCount as number) ?? (it.videoPlayCount as number)
-      if (typeof views === 'number') patch.views_count = views
-      if (typeof it.displayUrl === 'string' && it.displayUrl) {
-        patch.thumbnail_url = it.displayUrl
-      }
-      if (Object.keys(patch).length === 0) {
-        errors.push(`${row.post_id}: no metrics in payload`)
         return
       }
       const { error } = await supabase.from('instagram_posts').update(patch).eq('post_id', row.post_id)
@@ -66,17 +90,11 @@ async function refreshBatch(
   const withUrl = rows.filter((r) => r.post_url)
   if (withUrl.length === 0) return { updated: 0, errors: [] }
 
-  // Collab posts share a post_url across their per-dealer rows; the refresh actor
-  // rejects duplicate directUrls, so send each URL once (applyMetricUpdates maps
-  // results back by post_id and updates every matching row).
+  // Collab posts share a post_url across their per-dealer rows; actors reject
+  // duplicate URLs, so send each once (applyMetricUpdates maps back to every row).
   const uniqueUrls = [...new Set(withUrl.map((r) => r.post_url as string))]
   // No explicit client → runActor fails over across APIFY_TOKEN, APIFY_TOKEN_2…
-  const items = await runActor(REFRESH_ACTOR, {
-    directUrls: uniqueUrls,
-    resultsType: 'posts',
-    resultsLimit: 1,
-    addParentData: false,
-  })
+  const items = await runActor(REFRESH_ACTOR, { postUrls: uniqueUrls })
 
   return applyMetricUpdates(items, withUrl, supabase)
 }

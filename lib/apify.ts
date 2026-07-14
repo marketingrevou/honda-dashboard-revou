@@ -14,7 +14,11 @@ import { ApifyClient } from 'apify-client'
  * Both actors run on the Apify free tier with the same APIFY_TOKEN.
  */
 
-export const REFRESH_ACTOR = 'apify/instagram-api-scraper'
+// Metric-refresh actor. Switched from apify/instagram-api-scraper ($0.0023/post)
+// to clappi/instagram-posts-scraper ($0.0005/post) — ~4.6× cheaper, validated at
+// batch scale (90/90 posts returned, clean flat output: mediaId/likes/comments/
+// views/thumbnailUrl). Input is `postUrls: string[]`; see mapClappiMetrics.
+export const REFRESH_ACTOR = 'clappi/instagram-posts-scraper'
 export const DISCOVERY_ACTOR = 'sones/instagram-posts-scraper-lowcost'
 
 /**

@@ -19,16 +19,25 @@ export const DISCOVERY_ACTOR = 'sones/instagram-posts-scraper-lowcost'
 
 /**
  * The Apify API tokens to use, in priority order: APIFY_TOKEN first, then
- * APIFY_TOKEN_2, APIFY_TOKEN_3, … Blank/unset ones are skipped. Multiple tokens
- * let a run fail over to a second account when the first hits its Apify MONTHLY
- * USAGE HARD LIMIT (see runActor / isQuotaExhaustedError).
+ * APIFY_TOKEN_2, _3, _4, … auto-discovered from the environment (no fixed list —
+ * add APIFY_TOKEN_7 as a secret/env var and it's picked up with no code change).
+ * Blank/unset ones are skipped. Multiple tokens let a run fail over to another
+ * account when one hits its Apify MONTHLY USAGE HARD LIMIT (see runActor /
+ * isQuotaExhaustedError).
  */
+const MAX_APIFY_TOKENS = 50 // bound the scan; well above any realistic count
+
 export function apifyTokens(): string[] {
-  const tokens = [
-    process.env.APIFY_TOKEN,
-    process.env.APIFY_TOKEN_2,
-    process.env.APIFY_TOKEN_3,
-  ].filter((t): t is string => !!t && t.trim().length > 0)
+  const tokens: string[] = []
+  const primary = process.env.APIFY_TOKEN?.trim()
+  if (primary) tokens.push(primary)
+  // Collect APIFY_TOKEN_2, _3, _4, … in numeric order. Gaps are skipped (a missing
+  // _4 doesn't hide _5), so removing one token from the middle never silently
+  // drops the rest.
+  for (let i = 2; i <= MAX_APIFY_TOKENS; i++) {
+    const t = process.env[`APIFY_TOKEN_${i}`]?.trim()
+    if (t) tokens.push(t)
+  }
   return tokens
 }
 

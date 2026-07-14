@@ -14,13 +14,22 @@ import { ApifyClient } from 'npm:apify-client@2'
 export const REFRESH_ACTOR = 'apify/instagram-api-scraper'
 export const DISCOVERY_ACTOR = 'sones/instagram-posts-scraper-lowcost'
 
-/** Apify tokens in priority order (APIFY_TOKEN, APIFY_TOKEN_2, …); blanks skipped. */
+const MAX_APIFY_TOKENS = 50 // bound the scan; well above any realistic count
+
+/**
+ * Apify tokens in priority order (APIFY_TOKEN, then _2, _3, _4, … auto-discovered
+ * from the env — add APIFY_TOKEN_7 and it's picked up with no code change). Gaps
+ * are skipped; blanks removed.
+ */
 export function apifyTokens(): string[] {
-  return [
-    Deno.env.get('APIFY_TOKEN'),
-    Deno.env.get('APIFY_TOKEN_2'),
-    Deno.env.get('APIFY_TOKEN_3'),
-  ].filter((t): t is string => !!t && t.trim().length > 0)
+  const tokens: string[] = []
+  const primary = Deno.env.get('APIFY_TOKEN')?.trim()
+  if (primary) tokens.push(primary)
+  for (let i = 2; i <= MAX_APIFY_TOKENS; i++) {
+    const t = Deno.env.get(`APIFY_TOKEN_${i}`)?.trim()
+    if (t) tokens.push(t)
+  }
+  return tokens
 }
 
 export function makeApify(token?: string) {

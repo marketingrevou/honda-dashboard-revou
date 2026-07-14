@@ -35,8 +35,9 @@ jobs:
         env:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
           # Optional failover: if APIFY_TOKEN hits its monthly hard limit, the run
-          # retries the actor call on this second Apify account's token.
+          # retries the actor call on the next account's token (_2, then _3).
           APIFY_TOKEN_2: ${{ secrets.APIFY_TOKEN_2 }}
+          APIFY_TOKEN_3: ${{ secrets.APIFY_TOKEN_3 }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}

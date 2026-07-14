@@ -40,13 +40,47 @@ export async function countAccounts(supabase: SupabaseClient): Promise<number> {
 
 const PROFILE_PIC_BUCKET = 'profile-pics'
 
-// Recent posts to request per account. New posts are near the top, so 12 (one
-// IG page) is plenty.
+// Soft per-profile fetch target. The scrape is INCREMENTAL (see `newerThan`): the
+// actor pages until it reaches a post older than the cutoff, always fetching at
+// least one page (~12) and exporting the whole page. 12 matches that floor; a
+// dealer who posted more than a page pages further automatically, so nothing is
+// dropped and the cutoff (not this number) ends the fetch.
 const POSTS_PER_ACCOUNT = 12
+
+// Campaign-window floor. Never-scraped accounts start here, and it's the oldest
+// `newerThan` we ever send so pre-campaign posts never enter the DB.
+const POST_DATE_CUTOFF_STR = '2026-05-18'
 
 // Hard floor for post dates — the dashboard only covers the campaign window
 // starting 2026-05-18, so older posts are dropped before reaching the DB.
 const POST_DATE_CUTOFF = new Date('2026-05-18T00:00:00Z')
+
+/**
+ * For each username, the DATE (YYYY-MM-DD) of its newest stored post — the
+ * incremental scrape's `newerThan` cutoff. Never-scraped accounts floor to the
+ * campaign start. Mirrors loadLastPostDates in lib/run-update.ts.
+ */
+async function lastPostDates(
+  supabase: SupabaseClient,
+  usernames: string[],
+): Promise<Map<string, string>> {
+  const latest = new Map<string, string>()
+  const { data } = await supabase
+    .from('instagram_posts')
+    .select('account_username, post_date')
+    .in('account_username', usernames)
+    .gte('post_date', POST_DATE_CUTOFF_STR)
+    .order('post_date', { ascending: false })
+  for (const row of data ?? []) {
+    const u = row.account_username as string
+    const d = (row.post_date as string)?.slice(0, 10)
+    if (!d) continue
+    if (!latest.has(u)) latest.set(u, d) // newest-first, first seen = max
+  }
+  const cutoff = new Map<string, string>()
+  for (const u of usernames) cutoff.set(u, latest.get(u) ?? POST_DATE_CUTOFF_STR)
+  return cutoff
+}
 
 /**
  * Accounts processed per invocation. The discovery actor takes a whole batch of
@@ -123,13 +157,28 @@ async function processBatch(
   supabase: SupabaseClient,
   options: { classify?: boolean } = {},
 ): Promise<AccountResult[]> {
-  let items: ApifyItem[]
+  // INCREMENTAL: pull only posts newer than each account's last stored post. The
+  // actor takes one `newerThan` per run, so group this slice by cutoff date and
+  // run once per distinct date, merging the results. (postsPerProfile is just a
+  // runaway-pagination cap; the cutoff is what normally ends the fetch.)
+  let items: ApifyItem[] = []
   try {
-    // No explicit client → runActor fails over across APIFY_TOKEN, APIFY_TOKEN_2…
-    items = await runActor(DISCOVERY_ACTOR, {
-      usernames,
-      resultsLimit: POSTS_PER_ACCOUNT,
-    })
+    const cutoff = await lastPostDates(supabase, usernames)
+    const groups = new Map<string, string[]>()
+    for (const u of usernames) {
+      const c = cutoff.get(u) ?? POST_DATE_CUTOFF_STR
+      const list = groups.get(c) ?? []
+      list.push(u)
+      groups.set(c, list)
+    }
+    for (const [newerThan, group] of groups) {
+      const part = await runActor(DISCOVERY_ACTOR, {
+        usernames: group,
+        postsPerProfile: POSTS_PER_ACCOUNT,
+        newerThan,
+      })
+      items = items.concat(part)
+    }
   } catch (err) {
     return usernames.map((u) => ({ username: u, postsAdded: 0, error: String(err) }))
   }

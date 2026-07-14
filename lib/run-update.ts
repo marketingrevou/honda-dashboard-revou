@@ -54,9 +54,18 @@ export const ACCOUNTS = [
 
 const PROFILE_PIC_BUCKET = 'profile-pics'
 
-// Recent posts to request per account from the discovery actor. New posts since
-// the last run are always near the top, so 12 (one IG page) is plenty.
+// Soft per-profile fetch target. The scrape is INCREMENTAL: the actor pages until
+// it reaches a post older than each account's `newerThan` cutoff (its last stored
+// post_date). It ALWAYS fetches at least one page (~12 posts) and exports the whole
+// page, so 12 matches that natural floor — the cutoff, not this number, is what
+// stops the fetch. A dealer who posted more than a page since the last run pages
+// further automatically, so nothing is dropped; raising this only over-fetches.
 const POSTS_PER_ACCOUNT = 12
+
+// Campaign-window floor. Accounts never scraped before start here; the dashboard
+// only covers posts on/after this date, and it's also the oldest `newerThan` we
+// ever send so old posts never enter the DB.
+const POST_DATE_CUTOFF_STR = '2026-05-18'
 
 // Hard floor for post dates. The discovery actor returns each account's most
 // recent N posts regardless of age, so low-volume dealers drag in posts from
@@ -93,6 +102,53 @@ export async function loadEnabledAccounts(supabase: Supabase): Promise<string[]>
     .order('username', { ascending: true })
   if (error) throw new Error(`Failed to load account list: ${error.message}`)
   return (data ?? []).map((r) => r.username as string)
+}
+
+/**
+ * For each account, the DATE (YYYY-MM-DD) of its newest stored post — the
+ * incremental scrape's `newerThan` cutoff. Accounts with no stored posts (never
+ * scraped) floor to POST_DATE_CUTOFF_STR so we don't pull their entire history,
+ * only the campaign window. Using the DATE (not the exact timestamp) means the
+ * newest stored day is re-fetched and upsert-deduped — cheap insurance against
+ * missing a post that landed the same day as the last run.
+ *
+ * One round-trip: newest post_date per account via a grouped query, paged so the
+ * PostgREST 1000-row cap can't truncate it.
+ */
+export async function loadLastPostDates(
+  supabase: Supabase,
+  accounts: string[],
+): Promise<Map<string, string>> {
+  const inScope = new Set(accounts)
+  // Track the max post_date DATE seen per account across all pages.
+  const latest = new Map<string, string>()
+
+  const PAGE = 1000
+  for (let offset = 0; ; offset += PAGE) {
+    const { data, error } = await supabase
+      .from('instagram_posts')
+      .select('account_username, post_date')
+      .gte('post_date', POST_DATE_CUTOFF_STR)
+      .order('post_date', { ascending: false })
+      .range(offset, offset + PAGE - 1)
+    if (error) throw new Error(`Failed to load last-post dates: ${error.message}`)
+    if (!data?.length) break
+    for (const row of data) {
+      const u = row.account_username as string
+      if (!inScope.has(u)) continue // not in our scrape set
+      const d = (row.post_date as string)?.slice(0, 10)
+      if (!d) continue
+      const cur = latest.get(u)
+      if (cur === undefined || d > cur) latest.set(u, d)
+    }
+    if (data.length < PAGE) break
+  }
+
+  // Everyone gets a cutoff: their newest stored day, or the campaign floor if
+  // they have no stored posts yet (never scraped).
+  const cutoff = new Map<string, string>()
+  for (const u of accounts) cutoff.set(u, latest.get(u) ?? POST_DATE_CUTOFF_STR)
+  return cutoff
 }
 
 /**
@@ -170,15 +226,19 @@ function attributedHandles(p: ApifyItem): string[] {
 async function processBatch(
   usernames: string[],
   supabase: Supabase,
-  options: { classify?: boolean } = {},
+  options: { classify?: boolean; newerThan?: string } = {},
 ): Promise<AccountResult[]> {
   let items: ApifyItem[]
   try {
     // No explicit client → runActor fails over across APIFY_TOKEN, APIFY_TOKEN_2…
     // on a monthly-hard-limit error, so scraping continues on a second account.
+    // `newerThan` makes the fetch INCREMENTAL: the actor stops paginating once it
+    // reaches a post older than the cutoff, so we pull only posts newer than each
+    // group's last stored day (postsPerProfile is just a runaway-pagination cap).
     items = await runActor(DISCOVERY_ACTOR, {
       usernames,
-      resultsLimit: POSTS_PER_ACCOUNT,
+      postsPerProfile: POSTS_PER_ACCOUNT,
+      ...(options.newerThan && { newerThan: options.newerThan }),
     })
   } catch (err) {
     return usernames.map((u) => ({ username: u, postsAdded: 0, error: String(err) }))
@@ -455,15 +515,37 @@ export async function runUpdateForAccounts(
   } = {},
 ): Promise<{ accountsProcessed: number; postsAdded: number; errors?: string[] }> {
   const classify = options.classify ?? false
-  const totalBatches = Math.max(1, Math.ceil(accounts.length / CHUNK_SIZE))
+
+  // INCREMENTAL scrape: fetch only posts newer than each account's last stored
+  // post. The actor takes one `newerThan` per run (not per-URL), so group accounts
+  // by their cutoff DATE and do one actor run per distinct date. On this dataset
+  // that's ~14 groups for 151 accounts — far cheaper than pulling a fixed N posts
+  // for every account every run, and it never drops posts for high-volume dealers.
+  const cutoffByAccount = await loadLastPostDates(supabase, accounts)
+  const groups = new Map<string, string[]>()
+  for (const account of accounts) {
+    const cutoff = cutoffByAccount.get(account) ?? POST_DATE_CUTOFF_STR
+    const list = groups.get(cutoff) ?? []
+    list.push(account)
+    groups.set(cutoff, list)
+  }
+
+  // A single cutoff group could exceed CHUNK_SIZE; sub-chunk so one actor run
+  // never gets an unbounded username list. Flatten to (newerThan, slice) batches.
+  const batches: { newerThan: string; slice: string[] }[] = []
+  for (const [cutoff, list] of groups) {
+    for (let i = 0; i < list.length; i += CHUNK_SIZE) {
+      batches.push({ newerThan: cutoff, slice: list.slice(i, i + CHUNK_SIZE) })
+    }
+  }
 
   let accountsProcessed = 0
   let postsAdded = 0
   const errors: string[] = []
 
-  for (let batch = 0; batch < totalBatches; batch++) {
-    const slice = accounts.slice(batch * CHUNK_SIZE, batch * CHUNK_SIZE + CHUNK_SIZE)
-    const results = await processBatch(slice, supabase, { classify })
+  for (let batch = 0; batch < batches.length; batch++) {
+    const { newerThan, slice } = batches[batch]
+    const results = await processBatch(slice, supabase, { classify, newerThan })
 
     const batchAccounts = results.filter((r) => !r.error).length
     const batchPosts = results.reduce((s, r) => s + r.postsAdded, 0)
@@ -473,7 +555,7 @@ export async function runUpdateForAccounts(
 
     await options.onBatch?.({
       batch: batch + 1,
-      totalBatches,
+      totalBatches: batches.length,
       accountsProcessed: batchAccounts,
       postsAdded: batchPosts,
     })
@@ -506,7 +588,7 @@ export async function startScrape(chunk: number): Promise<{
   const client = makeApify()
   const { runId, datasetId } = await startActor(client, DISCOVERY_ACTOR, {
     usernames,
-    resultsLimit: POSTS_PER_ACCOUNT,
+    postsPerProfile: POSTS_PER_ACCOUNT,
   })
   return { runId, datasetId, usernames }
 }

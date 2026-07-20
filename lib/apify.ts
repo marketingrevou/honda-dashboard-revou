@@ -19,7 +19,15 @@ import { ApifyClient } from 'apify-client'
 // batch scale (90/90 posts returned, clean flat output: mediaId/likes/comments/
 // views/thumbnailUrl). Input is `postUrls: string[]`; see mapClappiMetrics.
 export const REFRESH_ACTOR = 'clappi/instagram-posts-scraper'
-export const DISCOVERY_ACTOR = 'sones/instagram-posts-scraper-lowcost'
+// New-post discovery. Switched from sones/instagram-posts-scraper-lowcost — whose
+// bundled free-tier proxy became unreliable (0% success, network timeouts) — to
+// instagram-scraper/instagram-profile-posts-scraper, which fetches reliably (95%+
+// coverage in testing). Input: `instagramUsernames: []` + `postsPerProfile` +
+// `onlyPostsNewerThan`. It returns accurate post IDs/dates/captions/thumbnails and
+// coauthors, but engagement metrics come back null/-1 — those are filled by the
+// separate refresh phase (clappi). Items are normalised to the legacy shape in
+// normalizeDiscoveryItem so downstream attribution/upsert logic is unchanged.
+export const DISCOVERY_ACTOR = 'instagram-scraper/instagram-profile-posts-scraper'
 
 /**
  * The Apify API tokens to use, in priority order: APIFY_TOKEN first, then

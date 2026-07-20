@@ -41,7 +41,9 @@ export async function classifyByCaptionAI(
   supabase: SupabaseClient,
   caption: string,
 ): Promise<PillarResult> {
-  if (!caption?.trim()) return 'Negative'
+  // No caption text to classify from — this is not a Negative signal, it's just
+  // unclassifiable by text. Route to Others (caller should have tried vision first).
+  if (!caption?.trim()) return 'Others'
   const definitions = await getPillarDefinitions(supabase)
   const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
@@ -50,7 +52,8 @@ export async function classifyByCaptionAI(
     messages: [{ role: 'user', content: captionAiPrompt(definitions) + caption }],
   })
   const text = response.choices[0]?.message?.content?.trim() ?? ''
-  return (VALID_PILLARS as readonly string[]).includes(text) ? (text as PillarResult) : 'Negative'
+  // Unrecognized AI output → couldn't classify → Others (not Negative).
+  return (VALID_PILLARS as readonly string[]).includes(text) ? (text as PillarResult) : 'Others'
 }
 
 // ─── Combined caption + image (gpt-4o-mini) ──────────────────────────────────
@@ -94,7 +97,8 @@ export async function classifyWithCombinedAnalysis(
     ],
   })
   const text = response.choices[0]?.message?.content?.trim() ?? ''
-  return (VALID_PILLARS as readonly string[]).includes(text) ? (text as PillarResult) : 'Negative'
+  // Unrecognized AI output → couldn't classify → Others (not Negative).
+  return (VALID_PILLARS as readonly string[]).includes(text) ? (text as PillarResult) : 'Others'
 }
 
 // ─── Main pipeline ────────────────────────────────────────────────────────────
@@ -104,6 +108,9 @@ export async function classifyPillar(
   caption: string,
   imageUrl: string | null,
 ): Promise<{ pillar: PillarResult; source: 'combined-vision' | 'caption-ai' }> {
+  // No caption → Others, unconditionally (don't attempt classification).
+  if (!caption?.trim()) return { pillar: 'Others', source: 'caption-ai' }
+
   if (imageUrl) {
     try {
       const pillar = await classifyWithCombinedAnalysis(supabase, caption, imageUrl)

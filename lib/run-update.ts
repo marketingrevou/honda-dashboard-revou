@@ -223,6 +223,56 @@ function attributedHandles(p: ApifyItem): string[] {
  * errors reporting stays accurate. An account that the actor returns no posts
  * for is reported with an error so it surfaces rather than silently vanishing.
  */
+/**
+ * Normalise one item from instagram-profile-posts-scraper into the field shape
+ * the rest of this module expects (originally sones'). The downstream code reads
+ * `scraped_username`, `user.{username,full_name,profile_pic_url}`, `taken_at`
+ * (unix seconds), `image_url`, `post_url`, `code`, `pk`, `caption`,
+ * `like_count`/`comment_count`/`play_count`, `media_type`/`product_type`, and
+ * `coauthor_producers` — so we map the new actor's fields onto those keys.
+ *
+ * `taken_at` from the new actor is an ISO string; convert to unix seconds.
+ * Metrics come back null/-1 (the refresh phase fills accurate ones), so a bad
+ * value maps to 0. post_type is derived from is_video/url since there's no
+ * media_type. `coauthor_producers` already matches, so collab fan-out is kept.
+ */
+function normalizeDiscoveryItem(p: ApifyItem): ApifyItem {
+  const owner = p.owner as
+    | { username?: string; full_name?: string; profile_pic_url?: string }
+    | undefined
+  const takenAtRaw = p.taken_at
+  const takenSecs =
+    typeof takenAtRaw === 'number'
+      ? takenAtRaw
+      : typeof takenAtRaw === 'string'
+        ? Math.floor(Date.parse(takenAtRaw) / 1000)
+        : 0
+  const like = p.like_count as number | null | undefined
+  const isVideo = p.is_video === true || /\/reel\//.test((p.url as string) ?? '')
+  return {
+    ...p,
+    pk: String(p.pk ?? p.id ?? ''),
+    scraped_username: owner?.username ?? '',
+    user: {
+      username: owner?.username,
+      full_name: owner?.full_name,
+      profile_pic_url: owner?.profile_pic_url,
+    },
+    taken_at: takenSecs,
+    post_url: (p.url as string) || (p.shortcode ? `https://www.instagram.com/p/${p.shortcode}/` : ''),
+    code: p.shortcode ?? p.code,
+    image_url: (p.image as string) ?? (p.image_url as string) ?? null,
+    caption: typeof p.caption === 'string' ? p.caption : ((p.caption as { text?: string })?.text ?? ''),
+    like_count: typeof like === 'number' && like >= 0 ? like : 0,
+    comment_count: (p.comment_count as number) ?? 0,
+    play_count: (p.play_count as number) ?? (p.view_count as number) ?? 0,
+    // getPostType(media_type, product_type): 2 = video, product_type 'clips' = reel.
+    media_type: isVideo ? 2 : 1,
+    product_type: isVideo ? 'clips' : '',
+    coauthor_producers: p.coauthor_producers ?? [],
+  }
+}
+
 async function processBatch(
   usernames: string[],
   supabase: Supabase,
@@ -232,14 +282,14 @@ async function processBatch(
   try {
     // No explicit client → runActor fails over across APIFY_TOKEN, APIFY_TOKEN_2…
     // on a monthly-hard-limit error, so scraping continues on a second account.
-    // `newerThan` makes the fetch INCREMENTAL: the actor stops paginating once it
-    // reaches a post older than the cutoff, so we pull only posts newer than each
-    // group's last stored day (postsPerProfile is just a runaway-pagination cap).
-    items = await runActor(DISCOVERY_ACTOR, {
-      usernames,
+    // `onlyPostsNewerThan` makes the fetch INCREMENTAL: only posts newer than each
+    // group's last stored day are returned (postsPerProfile caps runaway pagination).
+    const raw = await runActor(DISCOVERY_ACTOR, {
+      instagramUsernames: usernames,
       postsPerProfile: POSTS_PER_ACCOUNT,
-      ...(options.newerThan && { newerThan: options.newerThan }),
+      ...(options.newerThan && { onlyPostsNewerThan: options.newerThan }),
     })
+    items = raw.map(normalizeDiscoveryItem)
   } catch (err) {
     return usernames.map((u) => ({ username: u, postsAdded: 0, error: String(err) }))
   }
@@ -367,24 +417,55 @@ async function upsertAccountPosts(
     return { username, postsAdded: 0 }
   }
   try {
-    // Upsert all fetched posts to refresh thumbnail_url + metrics.
-    // Columns not provided (pillar, classification_source) are preserved for existing rows.
-    await supabase.from('instagram_posts').upsert(
-      posts.map((p) => ({
-        post_id: String(p.pk ?? p.id),
-        account_username: username,
-        post_url: (p.post_url as string) || `https://www.instagram.com/p/${p.code}/`,
-        thumbnail_url: (p.image_url as string) || null,
-        caption: captionText(p),
-        likes_count: (p.like_count as number) || 0,
-        comments_count: (p.comment_count as number) || 0,
-        views_count: (p.play_count as number) || (p.view_count as number) || 0,
-        post_date: postDate(p).toISOString(),
-        post_type: getPostType(p.media_type as number, p.product_type as string),
-      })),
-      // Composite key: a post can now exist once per dealer (collab fan-out), so
-      // the conflict target is (post_id, account_username), not post_id alone.
-      { onConflict: 'post_id,account_username' },
+    // The discovery actor returns accurate post IDs/dates/captions/thumbnails but
+    // NO reliable engagement metrics (they come back null/-1) — those are filled
+    // by the refresh phase (clappi). So the scrape upsert must NOT write metric
+    // columns: doing so would clobber an existing row's real likes/comments/views
+    // with 0. Insert new rows with metrics defaulting to 0 (the column default),
+    // and for existing rows update only the non-metric fields. We therefore split
+    // into "new" vs "existing" and upsert accordingly.
+    const ids = posts.map((p) => String(p.pk ?? p.id))
+    const { data: existingRows } = await supabase
+      .from('instagram_posts')
+      .select('post_id')
+      .eq('account_username', username)
+      .in('post_id', ids)
+    const existingIds = new Set((existingRows ?? []).map((r) => r.post_id as string))
+
+    const base = (p: ApifyItem) => ({
+      post_id: String(p.pk ?? p.id),
+      account_username: username,
+      post_url: (p.post_url as string) || `https://www.instagram.com/p/${p.code}/`,
+      thumbnail_url: (p.image_url as string) || null,
+      caption: captionText(p),
+      post_date: postDate(p).toISOString(),
+      post_type: getPostType(p.media_type as number, p.product_type as string),
+    })
+
+    // New posts: insert with metrics at their column default (0); refresh fills them.
+    const newPosts = posts.filter((p) => !existingIds.has(String(p.pk ?? p.id)))
+    if (newPosts.length > 0) {
+      await supabase
+        .from('instagram_posts')
+        .upsert(newPosts.map(base), { onConflict: 'post_id,account_username' })
+    }
+    // Existing posts: refresh only non-metric fields (thumbnail/caption/type),
+    // leaving likes/comments/views untouched so accurate values aren't clobbered.
+    const existingPosts = posts.filter((p) => existingIds.has(String(p.pk ?? p.id)))
+    await Promise.all(
+      existingPosts.map((p) =>
+        supabase
+          .from('instagram_posts')
+          .update({
+            post_url: (p.post_url as string) || `https://www.instagram.com/p/${p.code}/`,
+            thumbnail_url: (p.image_url as string) || null,
+            caption: captionText(p),
+            post_date: postDate(p).toISOString(),
+            post_type: getPostType(p.media_type as number, p.product_type as string),
+          })
+          .eq('post_id', String(p.pk ?? p.id))
+          .eq('account_username', username),
+      ),
     )
 
     // Phase-1 (scrape-only) callers stop here; classification is a separate pass.
